@@ -34,6 +34,10 @@ need_cmd() {
 # -----------------------------
 # Preflight
 # -----------------------------
+if [[ "$(id -u)" -ne 0 ]]; then
+  die "This script must be run as root."
+fi
+
 need_cmd sudo
 need_cmd virsh
 need_cmd virt-install
@@ -117,6 +121,7 @@ if sudo virsh dominfo "$VM_NAME" >/dev/null 2>&1; then
   echo "To open console: virt-manager or: sudo virsh console $VM_NAME"
   exit 0
 fi
+echo "Might fail due to qemu permissions.  Change /etc/libvirt/qemu.conf user to root -> systemctl daemon-reload, restart libvirtd"
 
 # Graphics: SPICE with virtio-gpu (good desktop UX)
 # Networking: libvirt default NAT network, virtio model
@@ -159,4 +164,3 @@ echo "      sudo virsh console $VM_NAME"
 echo
 echo "After Fedora installs, the VM will boot from disk."
 echo "Guest internet should work automatically via libvirt NAT (default network)."
-
