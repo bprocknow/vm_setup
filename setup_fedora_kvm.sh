@@ -121,7 +121,6 @@ if sudo virsh dominfo "$VM_NAME" >/dev/null 2>&1; then
   echo "To open console: virt-manager or: sudo virsh console $VM_NAME"
   exit 0
 fi
-echo "Might fail due to qemu permissions.  Change /etc/libvirt/qemu.conf user to root -> systemctl daemon-reload, restart libvirtd"
 
 # Graphics: SPICE with virtio-gpu (good desktop UX)
 # Networking: libvirt default NAT network, virtio model
@@ -160,7 +159,19 @@ echo "Next steps:"
 echo "  • Open the installer UI: virt-manager"
 echo "  • Or start and view console via:"
 echo "      sudo virsh start $VM_NAME"
-echo "      sudo virsh console $VM_NAME"
+echo "      sudo virt-manager"
 echo
 echo "After Fedora installs, the VM will boot from disk."
 echo "Guest internet should work automatically via libvirt NAT (default network)."
+
+# OUT_IF="$(ip route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')"
+echo "Outbound interface: ($OUT_IF) MUST BE SET"
+
+echo 'sudo iptables -I FORWARD 1 -i virbr0 -o "$OUT_IF" -j ACCEPT'
+echo 'sudo iptables -I FORWARD 1 -i "$OUT_IF" -o virbr0 -m state --state RELATED,ESTABLISHED -j ACCEPT'
+
+
+echo "VM setup: "
+echo "Might fail due to qemu permissions.  Change /etc/libvirt/qemu.conf user to root -> systemctl daemon-reload, restart libvirtd"
+echo "firewall-cmd --zone=libvirt --query-masquerade (--add-masquerade on zone if no)"
+echo "Reboot the VM"

@@ -62,7 +62,18 @@ while [[ $# -gt 0 ]]; do
       exit 2
       ;;
     *)
-      FRAG_FILES+=("$1")
+      frag_path="$1"
+      if [[ -f "$frag_path" ]]; then
+        if [[ "$frag_path" = /* ]]; then
+          FRAG_FILES+=("$frag_path")
+        else
+          FRAG_FILES+=("$PWD/$frag_path")
+        fi
+      elif [[ -f "$PWD/$frag_path" ]]; then
+        FRAG_FILES+=("$PWD/$frag_path")
+      else
+        FRAG_FILES+=("$frag_path")
+      fi
       shift
       ;;
   esac
@@ -235,4 +246,3 @@ else
   echo "  uname -a"
   echo "  rpm -qa | grep kernel || true"
 fi
-
