@@ -139,6 +139,9 @@ run sudo dnf install -y \
   perl-ExtUtils-Embed perl-FindBin perl-File-Compare perl-File-Copy \
   openssl
 
+cd "$SRC_DIR"
+echo "Moved to $(pwd)"
+
 # Ensure required helper script exists
 [[ -x scripts/kconfig/merge_config.sh ]] || die "Missing scripts/kconfig/merge_config.sh (unexpected tree?)"
 
