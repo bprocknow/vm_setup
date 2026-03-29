@@ -1,0 +1,2 @@
+[console_scripts]
+kernelvm = kernelvm.cli:main

@@ -1,0 +1,36 @@
+vm_name: kernel-test
+base_image_path: /var/lib/vm-images/Fedora-Cloud-Base.qcow2
+vcpus: 4
+memory_mb: 8192
+disk_size_gb: 40
+bridge_name: br0
+hostname: kernel-test-vm
+
+root_ssh_authorized_keys:
+  - ssh-ed25519 AAAA... your-key
+
+packages:
+  - gcc
+  - make
+  - git
+  - vim
+
+copy_files:
+  - src: /path/on/host/configs
+    dest: /root/configs
+
+first_boot_commands:
+  - systemctl enable sshd
+
+kernel_artifacts:
+  kernel_image: /path/to/bzImage
+  kernel_modules_archive: /path/to/modules.tar.zst
+  system_map: /path/to/System.map
+  config: /path/to/config
+
+kernel_cmdline_append:
+  - console=ttyS0,115200n8
+  - earlycon
+
+serial_log_enabled: true
+

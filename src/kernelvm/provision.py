@@ -1,0 +1,276 @@
+"""Cloud-init and payload generation."""
+
+from __future__ import annotations
+
+import logging
+import shutil
+from pathlib import Path
+from textwrap import dedent
+from typing import Any
+
+import yaml
+
+from .errors import AppError
+from .models import RunMetadata, VMConfig
+from .utils import ensure_command, run_command, write_json
+
+LOGGER = logging.getLogger(__name__)
+
+
+def render_cloud_init_artifacts(config: VMConfig, metadata: RunMetadata) -> None:
+    cloud_init_dir = Path(metadata.paths["cloud_init_dir"])
+    payload_dir = Path(metadata.paths["artifacts_dir"]) / "payload"
+    payload_dir.mkdir(parents=True, exist_ok=True)
+
+    stage_payload(config, metadata, payload_dir)
+
+    user_data = build_user_data(config, metadata)
+    meta_data = {
+        "instance-id": metadata.run_id,
+        "local-hostname": metadata.hostname,
+    }
+
+    network_config = {
+        "version": 2,
+        "ethernets": {
+            "eth0": {
+                "dhcp4": True,
+                "dhcp6": False,
+            }
+        },
+    }
+
+    user_data_path = cloud_init_dir / "user-data"
+    meta_data_path = cloud_init_dir / "meta-data"
+    network_config_path = cloud_init_dir / "network-config"
+    seed_image_path = cloud_init_dir / "seed.img"
+
+    user_data_path.write_text("#cloud-config\n" + yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+    meta_data_path.write_text(yaml.safe_dump(meta_data, sort_keys=False), encoding="utf-8")
+    network_config_path.write_text(yaml.safe_dump(network_config, sort_keys=False), encoding="utf-8")
+
+    cloud_localds = ensure_command("cloud-localds")
+    run_command(
+        [
+            cloud_localds,
+            "-N",
+            str(network_config_path),
+            str(seed_image_path),
+            str(user_data_path),
+            str(meta_data_path),
+        ]
+    )
+
+    metadata.runtime.seed_image = str(seed_image_path)
+    metadata.runtime.payload_dir = str(payload_dir)
+
+
+def stage_payload(config: VMConfig, metadata: RunMetadata, payload_dir: Path) -> None:
+    copied_root = payload_dir / "copy_files"
+    kernel_root = payload_dir / "kernel"
+    scripts_root = payload_dir / "scripts"
+    copied_root.mkdir(parents=True, exist_ok=True)
+    kernel_root.mkdir(parents=True, exist_ok=True)
+    scripts_root.mkdir(parents=True, exist_ok=True)
+
+    manifest: dict[str, Any] = {"copy_files": [], "kernel_artifacts": {}}
+
+    for index, copy_spec in enumerate(config.copy_files):
+        entry_dir = copied_root / f"{index:02d}"
+        entry_dir.mkdir(parents=True, exist_ok=True)
+        target = entry_dir / copy_spec.src.name
+        if copy_spec.src.is_dir():
+            shutil.copytree(copy_spec.src, target)
+            source_type = "dir"
+        else:
+            shutil.copy2(copy_spec.src, target)
+            source_type = "file"
+        manifest["copy_files"].append(
+            {
+                "index": index,
+                "src_name": copy_spec.src.name,
+                "payload_path": str(target.relative_to(payload_dir)),
+                "dest": copy_spec.dest,
+                "source_type": source_type,
+            }
+        )
+
+    for key, path in config.kernel_artifacts.to_dict().items():
+        if path is None:
+            continue
+        source = Path(path)
+        target = kernel_root / source.name
+        shutil.copy2(source, target)
+        manifest["kernel_artifacts"][key] = str(target.relative_to(payload_dir))
+
+    (scripts_root / "provision-firstboot.sh").write_text(build_firstboot_script(config), encoding="utf-8")
+    write_json(payload_dir / "manifest.json", manifest)
+
+
+def build_user_data(config: VMConfig, metadata: RunMetadata) -> dict[str, Any]:
+    write_files = [
+        {
+            "path": "/usr/local/sbin/kernelvm-discover-payload.sh",
+            "permissions": "0755",
+            "owner": "root:root",
+            "content": build_payload_locator_script(metadata.run_id),
+        }
+    ]
+
+    user_data: dict[str, Any] = {
+        "disable_root": False,
+        "ssh_pwauth": False,
+        "packages": config.packages,
+        "users": [
+            {
+                "name": "root",
+                "lock_passwd": True,
+                "shell": "/bin/bash",
+                "ssh_authorized_keys": config.root_ssh_authorized_keys,
+            }
+        ],
+        "write_files": write_files,
+        "runcmd": [
+            ["/usr/local/sbin/kernelvm-discover-payload.sh", metadata.run_id],
+        ],
+    }
+
+    if config.selinux_mode:
+        user_data["bootcmd"] = [f"setenforce {'0' if config.selinux_mode != 'enforcing' else '1'} || true"]
+
+    return _deep_merge(user_data, config.cloud_init_user_data_overrides)
+
+
+def build_payload_locator_script(run_id: str) -> str:
+    return dedent(
+        f"""\
+        #!/bin/bash
+        set -euo pipefail
+
+        RUN_ID="${{1:-{run_id}}}"
+        PAYLOAD_MOUNT="/mnt/kernelvm-payload"
+        STATUS_DIR="/var/lib/kernelvm"
+        mkdir -p "$STATUS_DIR" "$PAYLOAD_MOUNT"
+
+        DEVICE=""
+        for candidate in /dev/vd[b-z] /dev/sd[b-z] /dev/hd[b-z]; do
+          if [[ -b "$candidate" ]]; then
+            fstype="$(blkid -o value -s TYPE "$candidate" 2>/dev/null || true)"
+            if [[ "$fstype" == "vfat" ]]; then
+              DEVICE="$candidate"
+              break
+            fi
+          fi
+        done
+
+        if [[ -z "$DEVICE" ]]; then
+          echo "kernelvm: payload device not found" > "$STATUS_DIR/${{RUN_ID}}.status"
+          exit 1
+        fi
+
+        mount -o ro "$DEVICE" "$PAYLOAD_MOUNT"
+        bash "$PAYLOAD_MOUNT/scripts/provision-firstboot.sh" "$RUN_ID" "$PAYLOAD_MOUNT"
+        umount "$PAYLOAD_MOUNT"
+        """
+    )
+
+
+def build_firstboot_script(config: VMConfig) -> str:
+    copy_commands: list[str] = []
+    for index, copy_spec in enumerate(config.copy_files):
+        payload_item = f"$PAYLOAD_ROOT/copy_files/{index:02d}/{Path(copy_spec.src).name}"
+        copy_commands.append(f'mkdir -p "$(dirname "{copy_spec.dest}")"')
+        if Path(copy_spec.src).is_dir():
+            copy_commands.append(f'mkdir -p "{copy_spec.dest}"')
+            copy_commands.append(f'cp -a "{payload_item}/." "{copy_spec.dest}/"')
+        else:
+            copy_commands.append(f'cp -a "{payload_item}" "{copy_spec.dest}"')
+
+    cmdline = " ".join(config.kernel_cmdline_append)
+    kernel_image_name = Path(config.kernel_artifacts.kernel_image).name
+    modules_archive_name = Path(config.kernel_artifacts.kernel_modules_archive).name
+    system_map_name = Path(config.kernel_artifacts.system_map).name if config.kernel_artifacts.system_map else None
+    config_name = Path(config.kernel_artifacts.config).name if config.kernel_artifacts.config else None
+    initramfs_name = Path(config.kernel_artifacts.initramfs).name if config.kernel_artifacts.initramfs else None
+    selinux_cmd = ""
+    if config.selinux_mode:
+        selinux_cmd = dedent(
+            f"""\
+            if command -v grubby >/dev/null 2>&1; then
+              grubby --update-kernel=ALL --args='selinux={1 if config.selinux_mode == "enforcing" else 0}' || true
+            fi
+            """
+        )
+
+    first_boot_commands = "\n".join(config.first_boot_commands) if config.first_boot_commands else "true"
+
+    optional_artifact_steps = []
+    if system_map_name:
+        optional_artifact_steps.append(
+            f"""if [[ -f /var/lib/kernelvm/kernel-inputs/{system_map_name} ]]; then
+  cp -a /var/lib/kernelvm/kernel-inputs/{system_map_name} /boot/ || true
+fi"""
+        )
+    if config_name:
+        optional_artifact_steps.append(
+            f"""if [[ -f /var/lib/kernelvm/kernel-inputs/{config_name} ]]; then
+  cp -a /var/lib/kernelvm/kernel-inputs/{config_name} /boot/config-kernelvm || true
+fi"""
+        )
+    if initramfs_name:
+        optional_artifact_steps.append(
+            f"""if [[ -f /var/lib/kernelvm/kernel-inputs/{initramfs_name} ]]; then
+  cp -a /var/lib/kernelvm/kernel-inputs/{initramfs_name} /boot/ || true
+fi"""
+        )
+
+    return dedent(
+        f"""\
+        #!/bin/bash
+        set -euo pipefail
+        RUN_ID="${{1:?run-id-required}}"
+        PAYLOAD_ROOT="${{2:?payload-root-required}}"
+        STATUS_DIR="/var/lib/kernelvm"
+        LOG_FILE="$STATUS_DIR/${{RUN_ID}}.log"
+        STATUS_FILE="$STATUS_DIR/${{RUN_ID}}.status"
+        mkdir -p "$STATUS_DIR"
+        exec > >(tee -a "$LOG_FILE") 2>&1
+
+        trap 'echo "failed" > "$STATUS_FILE"' ERR
+
+        {"\n".join(copy_commands) if copy_commands else "true"}
+
+        KERNEL_ROOT="$PAYLOAD_ROOT/kernel"
+        mkdir -p /var/lib/kernelvm/kernel-inputs
+        cp -a "$KERNEL_ROOT/." /var/lib/kernelvm/kernel-inputs/
+
+        if [[ -f /var/lib/kernelvm/kernel-inputs/{kernel_image_name} ]]; then
+          cp -a /var/lib/kernelvm/kernel-inputs/{kernel_image_name} /boot/
+        fi
+        if [[ -f /var/lib/kernelvm/kernel-inputs/{modules_archive_name} ]]; then
+          mkdir -p /lib/modules
+          tar --auto-compress -xf /var/lib/kernelvm/kernel-inputs/{modules_archive_name} -C /
+        fi
+        {"\n".join(optional_artifact_steps) if optional_artifact_steps else "true"}
+
+        if command -v grubby >/dev/null 2>&1; then
+          grubby --set-default "/boot/{kernel_image_name}" || true
+          {"grubby --update-kernel=ALL --args='" + cmdline + "'" if cmdline else "true"}
+        fi
+
+        {selinux_cmd or "true"}
+        {first_boot_commands}
+        echo "success" > "$STATUS_FILE"
+        """
+    )
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    result = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
