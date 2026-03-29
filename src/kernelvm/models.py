@@ -129,6 +129,9 @@ class RuntimeInfo:
     pidfile: str | None = None
     seed_image: str | None = None
     payload_dir: str | None = None
+    payload_image: str | None = None
+    payload_filesystem: str | None = None
+    payload_label: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

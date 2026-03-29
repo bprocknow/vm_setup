@@ -76,8 +76,11 @@ def build_qemu_command(config: VMConfig, metadata: RunMetadata) -> list[str]:
         raise AppError("Seed image missing from runtime metadata")
     command.extend(["-drive", f"file={seed_image},if=virtio,media=disk,format=raw,readonly=on"])
 
-    payload_dir = metadata.runtime.payload_dir
-    if payload_dir:
+    payload_image = metadata.runtime.payload_image
+    if payload_image:
+        command.extend(["-drive", f"file={payload_image},if=virtio,media=disk,format=raw,readonly=on"])
+    elif metadata.runtime.payload_dir:
+        payload_dir = metadata.runtime.payload_dir
         command.extend(["-drive", f"file=fat:ro:{payload_dir},if=virtio,media=disk,format=raw"])
 
     if config.serial_log_enabled:

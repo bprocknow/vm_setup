@@ -8,6 +8,7 @@
 - `qemu-system-x86_64`
 - `qemu-img`
 - `cloud-localds`
+- `mkfs.ext4` from `e2fsprogs`
 - bridge networking already configured on the host, such as `br0`
 - SSH public keys for root access
 - a Fedora cloud base qcow2 image
@@ -66,6 +67,7 @@ Important artifacts:
 - `serial/console.log`: captured serial output
 - `cloud-init/`: rendered NoCloud inputs and seed image
 - `artifacts/payload/`: staged copy-in files, kernel artifacts, manifest, and first-boot scripts
+- `artifacts/payload.img`: generated ext4 payload image attached read-only to the guest for large artifact transfer
 
 ## Example config
 
@@ -110,7 +112,7 @@ serial_log_enabled: true
 ## Workflow
 
 1. Validate the config and host prerequisites with `kernelvm validate-config`.
-2. Create a new run with `kernelvm create`, which creates a fresh overlay, renders cloud-init artifacts, and launches the VM.
+2. Create a new run with `kernelvm create`, which creates a fresh overlay, stages the payload directory, builds `artifacts/payload.img`, renders cloud-init artifacts, and launches the VM.
 3. Inspect the deployment with `kernelvm status` and `kernelvm ssh-info`.
 4. Use `kernelvm console --attach` for serial access or inspect `serial/console.log`.
 5. Stop and restart an existing run with `kernelvm stop` and `kernelvm start`.
@@ -121,3 +123,4 @@ serial_log_enabled: true
 - The tool treats IP discovery as best effort. `ssh-info` and `status` always show hostname and MAC address, and add the guest IP when the host can discover it.
 - `create` refuses to start a second run while another run is active.
 - The tool does not mutate the base image.
+- New runs attach an ext4 payload image for staged files and kernel artifacts; legacy runs that only have the older payload directory metadata still start with the previous compatibility path.

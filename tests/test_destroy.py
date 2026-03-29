@@ -18,6 +18,10 @@ class DestroySafetyTests(unittest.TestCase):
             other_root.mkdir(parents=True)
             (run_root / "metadata.json").write_text("{}", encoding="utf-8")
             (other_root / "metadata.json").write_text("{}", encoding="utf-8")
+            (run_root / "artifacts").mkdir()
+            (run_root / "artifacts" / "payload.img").write_text("payload", encoding="utf-8")
+            (run_root / "artifacts" / "payload").mkdir()
+            (run_root / "artifacts" / "payload" / "manifest.json").write_text("{}", encoding="utf-8")
 
             metadata = RunMetadata(
                 run_id="run-1",

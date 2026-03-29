@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 
-from .errors import ValidationError
+from .errors import AppError, ValidationError
 from .models import (
     CopyFileSpec,
     KernelArtifacts,
@@ -18,6 +18,7 @@ from .models import (
     SUPPORTED_SELINUX_MODES,
     VMConfig,
 )
+from .utils import ensure_command
 
 SSH_KEY_RE = re.compile(r"^(ssh-(rsa|ed25519)|ecdsa-sha2-nistp(256|384|521)) [A-Za-z0-9+/=]+(?: .*)?$")
 MAC_RE = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
@@ -166,6 +167,12 @@ def validate_config(raw: dict[str, Any], *, config_path: Path | None = None) -> 
 def validate_host_requirements(config: VMConfig) -> None:
     errors: list[str] = []
 
+    for command_name in ("mkfs.ext4",):
+        try:
+            ensure_command(command_name)
+        except AppError as exc:
+            errors.append(exc.message)
+
     if not config.base_image_path.exists():
         errors.append(f"base_image_path does not exist: {config.base_image_path}")
     elif not config.base_image_path.is_file():
@@ -235,4 +242,3 @@ def _parse_kernel_artifacts(value: Any, errors: list[str]) -> KernelArtifacts:
         config=artifact("config", required=False),
         initramfs=artifact("initramfs", required=False),
     )
-

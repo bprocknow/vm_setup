@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from pathlib import Path
 from textwrap import dedent
@@ -15,6 +16,12 @@ from .models import RunMetadata, VMConfig
 from .utils import ensure_command, run_command, write_json
 
 LOGGER = logging.getLogger(__name__)
+PAYLOAD_LABEL = "KERNELVMPAYLOAD"
+PAYLOAD_FILESYSTEM = "ext4"
+PAYLOAD_IMAGE_NAME = "payload.img"
+PAYLOAD_IMAGE_ALIGN_BYTES = 4 * 1024 * 1024
+PAYLOAD_IMAGE_MIN_BYTES = 128 * 1024 * 1024
+PAYLOAD_IMAGE_BASE_OVERHEAD_BYTES = 64 * 1024 * 1024
 
 
 def render_cloud_init_artifacts(config: VMConfig, metadata: RunMetadata) -> None:
@@ -23,6 +30,7 @@ def render_cloud_init_artifacts(config: VMConfig, metadata: RunMetadata) -> None
     payload_dir.mkdir(parents=True, exist_ok=True)
 
     stage_payload(config, metadata, payload_dir)
+    payload_image_path = build_payload_image(payload_dir, metadata)
 
     user_data = build_user_data(config, metadata)
     meta_data = {
@@ -63,6 +71,9 @@ def render_cloud_init_artifacts(config: VMConfig, metadata: RunMetadata) -> None
 
     metadata.runtime.seed_image = str(seed_image_path)
     metadata.runtime.payload_dir = str(payload_dir)
+    metadata.runtime.payload_image = str(payload_image_path)
+    metadata.runtime.payload_filesystem = PAYLOAD_FILESYSTEM
+    metadata.runtime.payload_label = PAYLOAD_LABEL
 
 
 def stage_payload(config: VMConfig, metadata: RunMetadata, payload_dir: Path) -> None:
@@ -105,6 +116,51 @@ def stage_payload(config: VMConfig, metadata: RunMetadata, payload_dir: Path) ->
 
     (scripts_root / "provision-firstboot.sh").write_text(build_firstboot_script(config), encoding="utf-8")
     write_json(payload_dir / "manifest.json", manifest)
+
+
+def build_payload_image(payload_dir: Path, metadata: RunMetadata) -> Path:
+    mkfs_ext4 = ensure_command("mkfs.ext4")
+    payload_image_path = Path(metadata.paths["artifacts_dir"]) / PAYLOAD_IMAGE_NAME
+    payload_image_size = calculate_payload_image_size(payload_dir)
+
+    payload_image_path.parent.mkdir(parents=True, exist_ok=True)
+    with payload_image_path.open("wb") as handle:
+        handle.truncate(payload_image_size)
+
+    try:
+        run_command(
+            [
+                mkfs_ext4,
+                "-q",
+                "-d",
+                str(payload_dir),
+                "-L",
+                PAYLOAD_LABEL,
+                "-F",
+                str(payload_image_path),
+            ]
+        )
+    except AppError:
+        payload_image_path.unlink(missing_ok=True)
+        raise
+
+    return payload_image_path
+
+
+def calculate_payload_image_size(payload_dir: Path) -> int:
+    total_size = 0
+    inode_count = 0
+
+    for current_root, dirnames, filenames in os.walk(payload_dir):
+        inode_count += 1 + len(dirnames)
+        root_path = Path(current_root)
+        for filename in filenames:
+            inode_count += 1
+            total_size += (root_path / filename).stat().st_size
+
+    overhead = PAYLOAD_IMAGE_BASE_OVERHEAD_BYTES + max(16 * 1024 * 1024, total_size // 10) + (inode_count * 4096)
+    required_size = max(PAYLOAD_IMAGE_MIN_BYTES, total_size + overhead)
+    return _align_up(required_size, PAYLOAD_IMAGE_ALIGN_BYTES)
 
 
 def build_user_data(config: VMConfig, metadata: RunMetadata) -> dict[str, Any]:
@@ -153,12 +209,20 @@ def build_payload_locator_script(run_id: str) -> str:
         mkdir -p "$STATUS_DIR" "$PAYLOAD_MOUNT"
 
         DEVICE=""
+        SELECTED_FSTYPE=""
         for candidate in /dev/vd[b-z] /dev/sd[b-z] /dev/hd[b-z]; do
           if [[ -b "$candidate" ]]; then
+            label="$(blkid -o value -s LABEL "$candidate" 2>/dev/null || true)"
             fstype="$(blkid -o value -s TYPE "$candidate" 2>/dev/null || true)"
-            if [[ "$fstype" == "vfat" ]]; then
-              DEVICE="$candidate"
-              break
+            if [[ "$label" == "{PAYLOAD_LABEL}" || "$fstype" == "vfat" ]]; then
+              if mount -o ro "$candidate" "$PAYLOAD_MOUNT" 2>/dev/null; then
+                if [[ -f "$PAYLOAD_MOUNT/scripts/provision-firstboot.sh" ]]; then
+                  DEVICE="$candidate"
+                  SELECTED_FSTYPE="$fstype"
+                  break
+                fi
+                umount "$PAYLOAD_MOUNT" || true
+              fi
             fi
           fi
         done
@@ -168,7 +232,7 @@ def build_payload_locator_script(run_id: str) -> str:
           exit 1
         fi
 
-        mount -o ro "$DEVICE" "$PAYLOAD_MOUNT"
+        echo "kernelvm: using payload device $DEVICE (${{SELECTED_FSTYPE:-unknown}})" >> "$STATUS_DIR/${{RUN_ID}}.log"
         bash "$PAYLOAD_MOUNT/scripts/provision-firstboot.sh" "$RUN_ID" "$PAYLOAD_MOUNT"
         umount "$PAYLOAD_MOUNT"
         """
@@ -274,3 +338,9 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
             result[key] = value
     return result
 
+
+def _align_up(value: int, alignment: int) -> int:
+    remainder = value % alignment
+    if remainder == 0:
+        return value
+    return value + alignment - remainder

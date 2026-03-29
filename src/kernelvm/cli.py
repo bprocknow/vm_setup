@@ -222,6 +222,8 @@ def format_status(metadata):
         f"work_dir: {metadata.paths['root']}",
         f"cloud_init_dir: {metadata.paths['cloud_init_dir']}",
         f"artifacts_dir: {metadata.paths['artifacts_dir']}",
+        f"payload_image: {metadata.runtime.payload_image or 'legacy-payload-dir'}",
+        f"payload_filesystem: {metadata.runtime.payload_filesystem or 'vfat-dir-share'}",
         f"logs_dir: {metadata.paths['logs_dir']}",
         f"serial_log: {metadata.runtime.serial_log or 'n/a'}",
     ]

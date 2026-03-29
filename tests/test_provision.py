@@ -5,8 +5,16 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from kernelvm.errors import AppError
 from kernelvm.models import KernelArtifacts, RunMetadata, RuntimeInfo, VMConfig
-from kernelvm.provision import build_firstboot_script, render_cloud_init_artifacts
+from kernelvm.provision import (
+    PAYLOAD_LABEL,
+    build_firstboot_script,
+    build_payload_image,
+    build_payload_locator_script,
+    calculate_payload_image_size,
+    render_cloud_init_artifacts,
+)
 
 
 class ProvisioningTests(unittest.TestCase):
@@ -84,3 +92,66 @@ class ProvisioningTests(unittest.TestCase):
             self.assertIn("console=ttyS0,115200n8 earlycon", script)
             self.assertNotIn("None", script)
 
+    def test_payload_locator_script_supports_ext4_and_legacy_vfat(self) -> None:
+        script = build_payload_locator_script("run-1")
+        self.assertIn(PAYLOAD_LABEL, script)
+        self.assertIn('"$fstype" == "vfat"', script)
+        self.assertIn('scripts/provision-firstboot.sh', script)
+
+    def test_render_cloud_init_artifacts_records_payload_image_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "base.qcow2").write_text("x", encoding="utf-8")
+            config = self._config(root)
+            metadata = self._metadata(root)
+
+            with mock.patch("kernelvm.provision.ensure_command", side_effect=["mkfs.ext4", "cloud-localds"]), mock.patch(
+                "kernelvm.provision.run_command"
+            ) as run_command:
+                render_cloud_init_artifacts(config, metadata)
+
+            self.assertTrue(metadata.runtime.payload_dir.endswith("/artifacts/payload"))
+            self.assertTrue(metadata.runtime.payload_image.endswith("/artifacts/payload.img"))
+            self.assertEqual(metadata.runtime.payload_filesystem, "ext4")
+            self.assertEqual(metadata.runtime.payload_label, PAYLOAD_LABEL)
+            self.assertEqual(run_command.call_args_list[0].args[0][0], "mkfs.ext4")
+            self.assertEqual(run_command.call_args_list[1].args[0][0], "cloud-localds")
+
+    def test_build_payload_image_sizes_for_large_modules_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            payload_dir = root / "payload"
+            kernel_dir = payload_dir / "kernel"
+            kernel_dir.mkdir(parents=True)
+            large_archive = kernel_dir / "modules.tar.zst"
+            with large_archive.open("wb") as handle:
+                handle.truncate(513 * 1024 * 1024)
+
+            metadata = self._metadata(root)
+            image_size = calculate_payload_image_size(payload_dir)
+            self.assertGreater(image_size, large_archive.stat().st_size)
+
+            with mock.patch("kernelvm.provision.ensure_command", return_value="mkfs.ext4"), mock.patch(
+                "kernelvm.provision.run_command"
+            ) as run_command:
+                image_path = build_payload_image(payload_dir, metadata)
+
+            self.assertEqual(image_path.name, "payload.img")
+            self.assertEqual(image_path.stat().st_size, image_size)
+            self.assertIn("mkfs.ext4", run_command.call_args.args[0][0])
+
+    def test_build_payload_image_removes_partial_file_on_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            payload_dir = root / "payload"
+            payload_dir.mkdir()
+            (payload_dir / "manifest.json").write_text("{}", encoding="utf-8")
+            metadata = self._metadata(root)
+
+            with mock.patch("kernelvm.provision.ensure_command", return_value="mkfs.ext4"), mock.patch(
+                "kernelvm.provision.run_command", side_effect=AppError("mkfs failed")
+            ):
+                with self.assertRaises(AppError):
+                    build_payload_image(payload_dir, metadata)
+
+            self.assertFalse((root / "work" / "run-1" / "artifacts" / "payload.img").exists())
