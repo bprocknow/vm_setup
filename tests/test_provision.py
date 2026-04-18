@@ -5,11 +5,15 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import yaml
+
 from kernelvm.errors import AppError
 from kernelvm.models import KernelArtifacts, RunMetadata, RuntimeInfo, VMConfig
 from kernelvm.provision import (
     PAYLOAD_LABEL,
+    PRIMARY_NETWORK_ID,
     build_firstboot_script,
+    build_network_config,
     build_payload_image,
     build_payload_locator_script,
     calculate_payload_image_size,
@@ -116,6 +120,25 @@ class ProvisioningTests(unittest.TestCase):
             self.assertEqual(metadata.runtime.payload_label, PAYLOAD_LABEL)
             self.assertEqual(run_command.call_args_list[0].args[0][0], "mkfs.ext4")
             self.assertEqual(run_command.call_args_list[1].args[0][0], "cloud-localds")
+            network_config = yaml.safe_load(
+                (root / "work" / "run-1" / "cloud-init" / "network-config").read_text(encoding="utf-8")
+            )
+            self.assertIn(PRIMARY_NETWORK_ID, network_config["ethernets"])
+            self.assertEqual(
+                network_config["ethernets"][PRIMARY_NETWORK_ID]["match"]["macaddress"],
+                "52:54:00:12:34:56",
+            )
+            self.assertNotIn("eth0", network_config["ethernets"])
+
+    def test_build_network_config_matches_guest_mac(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            metadata = self._metadata(root)
+            network_config = build_network_config(metadata)
+
+            self.assertEqual(network_config["ethernets"][PRIMARY_NETWORK_ID]["match"]["macaddress"], "52:54:00:12:34:56")
+            self.assertTrue(network_config["ethernets"][PRIMARY_NETWORK_ID]["dhcp4"])
+            self.assertFalse(network_config["ethernets"][PRIMARY_NETWORK_ID]["dhcp6"])
 
     def test_build_payload_image_sizes_for_large_modules_archive(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

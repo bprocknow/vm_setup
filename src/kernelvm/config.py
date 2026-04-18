@@ -10,6 +10,8 @@ from typing import Any
 import yaml
 
 from .errors import AppError, ValidationError
+from .firmware import resolve_legacy_bios_path
+from .host_network import diagnose_bridge
 from .models import (
     CopyFileSpec,
     KernelArtifacts,
@@ -173,6 +175,11 @@ def validate_host_requirements(config: VMConfig) -> None:
         except AppError as exc:
             errors.append(exc.message)
 
+    try:
+        resolve_legacy_bios_path()
+    except AppError as exc:
+        errors.append(exc.message)
+
     if not config.base_image_path.exists():
         errors.append(f"base_image_path does not exist: {config.base_image_path}")
     elif not config.base_image_path.is_file():
@@ -185,6 +192,10 @@ def validate_host_requirements(config: VMConfig) -> None:
         errors.append(f"bridge_name does not exist on host: {config.bridge_name}")
     elif not (bridge_path / "bridge").exists():
         errors.append(f"bridge_name is not a bridge device: {config.bridge_name}")
+    else:
+        bridge_diagnosis = diagnose_bridge(config.bridge_name)
+        if bridge_diagnosis:
+            errors.append(bridge_diagnosis)
 
     for label, path in config.kernel_artifacts.to_dict().items():
         if path is None:

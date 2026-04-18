@@ -125,6 +125,7 @@ class RuntimeInfo:
     qmp_socket: str | None = None
     serial_socket: str | None = None
     serial_log: str | None = None
+    serial_log_offset: int | None = None
     process_log: str | None = None
     pidfile: str | None = None
     seed_image: str | None = None
@@ -159,6 +160,10 @@ class RunMetadata:
     disk_size_gb: int | None
     paths: dict[str, str]
     kernel_artifacts: dict[str, Any]
+    detected_ip_source: str | None = None
+    readiness_state: str = "unknown"
+    readiness_reason: str | None = None
+    readiness_source: str | None = None
     runtime: RuntimeInfo = field(default_factory=RuntimeInfo)
     errors: list[str] = field(default_factory=list)
 

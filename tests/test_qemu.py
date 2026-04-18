@@ -66,11 +66,15 @@ class QemuCommandTests(unittest.TestCase):
                 root_ssh_authorized_keys=["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKey comment"],
             )
 
-            with mock.patch("kernelvm.qemu.ensure_command", return_value="qemu-system-x86_64"):
+            with (
+                mock.patch("kernelvm.qemu.ensure_command", return_value="qemu-system-x86_64"),
+                mock.patch("kernelvm.qemu.resolve_legacy_bios_path", return_value=Path("/usr/share/seabios/bios.bin")),
+            ):
                 command = build_qemu_command(config, metadata)
 
             command_string = " ".join(command)
             self.assertIn("bridge,br=br0", command_string)
+            self.assertIn("-bios /usr/share/seabios/bios.bin", command_string)
             self.assertIn("overlay.qcow2", command_string)
             self.assertIn("console.sock", command_string)
             self.assertIn("payload.img", command_string)
@@ -129,7 +133,10 @@ class QemuCommandTests(unittest.TestCase):
                 root_ssh_authorized_keys=["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKey comment"],
             )
 
-            with mock.patch("kernelvm.qemu.ensure_command", return_value="qemu-system-x86_64"):
+            with (
+                mock.patch("kernelvm.qemu.ensure_command", return_value="qemu-system-x86_64"),
+                mock.patch("kernelvm.qemu.resolve_legacy_bios_path", return_value=Path("/usr/share/seabios/bios.bin")),
+            ):
                 command = build_qemu_command(config, metadata)
 
             self.assertIn("fat:ro:", " ".join(command))

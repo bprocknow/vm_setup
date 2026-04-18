@@ -10,16 +10,49 @@ Requires-Dist: PyYAML>=6.0
 
 `kernelvm` is a Python CLI for disposable Fedora KVM/QEMU guests used in Linux kernel testing. Each deployment gets its own run ID, writable qcow2 overlay, cloud-init inputs, serial console artifacts, and host-side metadata so runs can be restarted or destroyed cleanly.
 
+The VM boots with SeaBIOS, which keeps Secure Boot disabled explicitly rather than relying on QEMU firmware defaults.
+
 ## Host prerequisites
 
 - Fedora host with `python3`
 - `qemu-system-x86_64`
 - `qemu-img`
 - `cloud-localds`
+- `mkfs.ext4` from `e2fsprogs`
 - bridge networking already configured on the host, such as `br0`
 - SSH public keys for root access
 - a Fedora cloud base qcow2 image
 - host-built kernel artifacts, at minimum a kernel image and modules archive
+
+## Bridge setup
+
+The repository includes a helper script that creates `br0`, attaches an uplink, updates `/etc/qemu/bridge.conf`, and runs a post-setup sanity test:
+
+```bash
+sudo ./br_setup eno1
+```
+
+Use `./br_setup --help` to see optional flags such as `--bridge` and `--check-only`.
+
+sudo dnf install qemu-system-x86 bridge-utils
+sudo mkdir -p /etc/qemu
+echo 'allow br0' | sudo tee /etc/qemu/bridge.conf
+sudo chmod 0640 /etc/qemu/bridge.conf
+
+Then create the bridge and move your host NIC onto it. Replace enp1s0 with your actual uplink:
+
+nmcli connection add type bridge ifname br0 con-name br0
+nmcli connection add type bridge-slave ifname INTERFACE master br0
+nmcli connection modify br0 ipv4.method auto ipv6.method auto
+nmcli connection up br0
+
+Before launching a VM, verify that br0 is the active network path instead of the physical NIC:
+
+ip -brief addr show br0
+bridge link
+ip route show
+
+If br0 is DOWN, has no attached interfaces, or the default route still points at the physical NIC, move the uplink and host IP configuration onto br0 first. Otherwise the guest will boot with only link-local IPv6 and will never receive DHCP.
 
 ## Install
 
@@ -74,6 +107,7 @@ Important artifacts:
 - `serial/console.log`: captured serial output
 - `cloud-init/`: rendered NoCloud inputs and seed image
 - `artifacts/payload/`: staged copy-in files, kernel artifacts, manifest, and first-boot scripts
+- `artifacts/payload.img`: generated ext4 payload image attached read-only to the guest for large artifact transfer
 
 ## Example config
 
@@ -118,8 +152,9 @@ serial_log_enabled: true
 ## Workflow
 
 1. Validate the config and host prerequisites with `kernelvm validate-config`.
-2. Create a new run with `kernelvm create`, which creates a fresh overlay, renders cloud-init artifacts, and launches the VM.
+2. Create a new run with `kernelvm create`, which creates a fresh overlay, stages the payload directory, builds `artifacts/payload.img`, renders cloud-init artifacts, and launches the VM.
 3. Inspect the deployment with `kernelvm status` and `kernelvm ssh-info`.
+   These commands now report guest network readiness, the detected IP source, and any recorded readiness failure reason.
 4. Use `kernelvm console --attach` for serial access or inspect `serial/console.log`.
 5. Stop and restart an existing run with `kernelvm stop` and `kernelvm start`.
 6. Remove the run completely with `kernelvm destroy`.
@@ -127,5 +162,9 @@ serial_log_enabled: true
 ## Notes
 
 - The tool treats IP discovery as best effort. `ssh-info` and `status` always show hostname and MAC address, and add the guest IP when the host can discover it.
+- Bridged guest networking is considered ready only when the tool observes a usable IPv4 address; if that never appears, `status` and `ssh-info` report the recorded readiness failure reason instead of only showing an unknown IP.
+- Guest network config is rendered against the launched NIC's MAC address rather than assuming a fixed guest interface name such as `eth0`.
+- Restarted runs reassess network reachability from the current boot only; historical IPs from older appended serial-log sessions are not reused as current SSH coordinates.
 - `create` refuses to start a second run while another run is active.
 - The tool does not mutate the base image.
+- New runs attach an ext4 payload image for staged files and kernel artifacts; legacy runs that only have the older payload directory metadata still start with the previous compatibility path.

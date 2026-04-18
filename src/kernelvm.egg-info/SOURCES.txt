@@ -5,6 +5,8 @@ src/kernelvm/__main__.py
 src/kernelvm/cli.py
 src/kernelvm/config.py
 src/kernelvm/errors.py
+src/kernelvm/firmware.py
+src/kernelvm/host_network.py
 src/kernelvm/logging_utils.py
 src/kernelvm/models.py
 src/kernelvm/network.py
@@ -19,8 +21,14 @@ src/kernelvm.egg-info/dependency_links.txt
 src/kernelvm.egg-info/entry_points.txt
 src/kernelvm.egg-info/requires.txt
 src/kernelvm.egg-info/top_level.txt
+tests/test_br_setup.py
+tests/test_cli.py
 tests/test_config.py
 tests/test_destroy.py
+tests/test_firmware.py
+tests/test_host_network.py
+tests/test_logging_utils.py
+tests/test_network.py
 tests/test_provision.py
 tests/test_qemu.py
 tests/test_runs.py

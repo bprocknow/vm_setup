@@ -1,0 +1,228 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BRIDGE_NAME="br0"
+CHECK_ONLY=0
+DRY_RUN=0
+SKIP_GATEWAY_PING=0
+INTERFACE=""
+
+SYS_CLASS_NET="${BR_SETUP_SYS_CLASS_NET:-/sys/class/net}"
+QEMU_DIR="${BR_SETUP_QEMU_DIR:-/etc/qemu}"
+
+usage() {
+    cat <<'EOF'
+Usage: br_setup [--bridge BRIDGE] [--check-only] [--dry-run] [--skip-gateway-ping] INTERFACE
+
+Create or validate the host bridge used by kernelvm.
+
+Arguments:
+  INTERFACE              Physical uplink to attach to the bridge, for example eno1
+
+Options:
+  --bridge BRIDGE        Bridge name to create or validate. Default: br0
+  --check-only           Skip setup and only run the sanity test
+  --dry-run              Print the setup commands without executing them
+  --skip-gateway-ping    Skip the gateway ping during the sanity test
+  --help                 Show this help text
+EOF
+}
+
+log() {
+    printf '%s\n' "$*" >&2
+}
+
+die() {
+    log "error: $*"
+    exit 1
+}
+
+require_command() {
+    command -v "$1" >/dev/null 2>&1 || die "required command not found on PATH: $1"
+}
+
+run() {
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+        printf '+'
+        for arg in "$@"; do
+            printf ' %q' "$arg"
+        done
+        printf '\n' >&2
+        return 0
+    fi
+    "$@"
+}
+
+require_root_if_needed() {
+    if [[ "$CHECK_ONLY" -eq 1 || "$DRY_RUN" -eq 1 || "${BR_SETUP_SKIP_ROOT_CHECK:-0}" == "1" ]]; then
+        return
+    fi
+    if [[ "$(id -u)" -ne 0 ]]; then
+        die "run this script as root, or set BR_SETUP_SKIP_ROOT_CHECK=1 for a test harness"
+    fi
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --bridge)
+                [[ $# -ge 2 ]] || die "--bridge requires a value"
+                BRIDGE_NAME="$2"
+                shift 2
+                ;;
+            --check-only)
+                CHECK_ONLY=1
+                shift
+                ;;
+            --dry-run)
+                DRY_RUN=1
+                shift
+                ;;
+            --skip-gateway-ping)
+                SKIP_GATEWAY_PING=1
+                shift
+                ;;
+            --help|-h)
+                usage
+                exit 0
+                ;;
+            --*)
+                die "unknown option: $1"
+                ;;
+            *)
+                if [[ -n "$INTERFACE" ]]; then
+                    die "only one interface may be specified"
+                fi
+                INTERFACE="$1"
+                shift
+                ;;
+        esac
+    done
+
+    [[ -n "$INTERFACE" ]] || die "an interface name is required"
+}
+
+ensure_interface_exists() {
+    [[ -e "$SYS_CLASS_NET/$INTERFACE" ]] || die "interface does not exist: $INTERFACE"
+}
+
+connection_exists() {
+    nmcli connection show "$1" >/dev/null 2>&1
+}
+
+ensure_bridge_connection() {
+    if connection_exists "$BRIDGE_NAME"; then
+        log "Reusing existing bridge connection $BRIDGE_NAME"
+    else
+        run nmcli connection add type bridge ifname "$BRIDGE_NAME" con-name "$BRIDGE_NAME"
+    fi
+    run nmcli connection modify "$BRIDGE_NAME" ipv4.method auto ipv6.method auto
+}
+
+ensure_bridge_slave_connection() {
+    local slave_connection="${BRIDGE_NAME}-${INTERFACE}"
+    if connection_exists "$slave_connection"; then
+        log "Reusing existing bridge-slave connection $slave_connection"
+    else
+        run nmcli connection add type bridge-slave ifname "$INTERFACE" master "$BRIDGE_NAME" con-name "$slave_connection"
+    fi
+}
+
+ensure_qemu_bridge_conf() {
+    local bridge_conf="$QEMU_DIR/bridge.conf"
+
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+        printf '+ mkdir -p %q\n' "$QEMU_DIR" >&2
+        printf '+ ensure %q contains %q\n' "$bridge_conf" "allow $BRIDGE_NAME" >&2
+        return
+    fi
+
+    mkdir -p "$QEMU_DIR"
+    touch "$bridge_conf"
+    if ! grep -Fxq "allow $BRIDGE_NAME" "$bridge_conf"; then
+        printf 'allow %s\n' "$BRIDGE_NAME" >>"$bridge_conf"
+    fi
+}
+
+bring_bridge_up() {
+    run nmcli connection up "$BRIDGE_NAME"
+}
+
+gateway_for_bridge() {
+    ip route show default | awk -v bridge="$BRIDGE_NAME" '
+        $1 == "default" {
+            has_bridge = 0
+            for (i = 1; i <= NF; i++) {
+                if ($i == "dev" && (i + 1) <= NF && $(i + 1) == bridge) {
+                    has_bridge = 1
+                }
+                if ($i == "via" && (i + 1) <= NF) {
+                    gateway = $(i + 1)
+                }
+            }
+            if (has_bridge && gateway != "") {
+                print gateway
+                exit
+            }
+        }
+    '
+}
+
+sanity_test() {
+    local operstate
+    local member_output
+    local route_output
+    local gateway
+
+    [[ -e "$SYS_CLASS_NET/$BRIDGE_NAME/bridge" ]] || die "sanity test failed: $BRIDGE_NAME is not a bridge device"
+
+    operstate="$(cat "$SYS_CLASS_NET/$BRIDGE_NAME/operstate" 2>/dev/null || true)"
+    [[ "$operstate" != "down" ]] || die "sanity test failed: $BRIDGE_NAME is down"
+
+    member_output="$(bridge link show master "$BRIDGE_NAME" 2>/dev/null || true)"
+    grep -Eq "(^|[[:space:]])${INTERFACE}([:@[:space:]]|$)" <<<"$member_output" \
+        || die "sanity test failed: $INTERFACE is not attached to $BRIDGE_NAME"
+
+    route_output="$(ip route show default 2>/dev/null || true)"
+    grep -Eq "(^|[[:space:]])dev[[:space:]]+${BRIDGE_NAME}([[:space:]]|$)" <<<"$route_output" \
+        || die "sanity test failed: the default route is not using $BRIDGE_NAME"
+
+    if [[ "$SKIP_GATEWAY_PING" -eq 0 ]]; then
+        gateway="$(gateway_for_bridge)"
+        [[ -n "$gateway" ]] || die "sanity test failed: no gateway found on $BRIDGE_NAME"
+        run ping -c 1 -W 2 "$gateway" >/dev/null
+    fi
+
+    log "Bridge sanity test passed for $BRIDGE_NAME on $INTERFACE"
+    ip -brief link show "$BRIDGE_NAME"
+    bridge link show master "$BRIDGE_NAME"
+    ip route show default
+}
+
+main() {
+    parse_args "$@"
+
+    require_command nmcli
+    require_command ip
+    require_command bridge
+    require_command ping
+
+    require_root_if_needed
+    ensure_interface_exists
+
+    if [[ "$CHECK_ONLY" -eq 0 ]]; then
+        ensure_bridge_connection
+        ensure_bridge_slave_connection
+        ensure_qemu_bridge_conf
+        bring_bridge_up
+    fi
+
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+        log "Dry run complete. Sanity test skipped."
+        exit 0
+    fi
+
+    sanity_test
+}
+
+main "$@"

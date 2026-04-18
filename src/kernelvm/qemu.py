@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 from .errors import AppError
+from .firmware import resolve_legacy_bios_path
 from .models import RunMetadata, VMConfig
 from .qmp import qmp_execute
 from .utils import ensure_command, run_command
@@ -41,6 +42,7 @@ def create_overlay(config: VMConfig, metadata: RunMetadata) -> Path:
 
 def build_qemu_command(config: VMConfig, metadata: RunMetadata) -> list[str]:
     qemu_system = ensure_command("qemu-system-x86_64")
+    seabios_path = resolve_legacy_bios_path()
     qmp_socket = Path(metadata.paths["logs_dir"]) / "qmp.sock"
     pidfile = Path(metadata.paths["logs_dir"]) / "qemu.pid"
     process_log = Path(metadata.paths["logs_dir"]) / "qemu.log"
@@ -54,6 +56,8 @@ def build_qemu_command(config: VMConfig, metadata: RunMetadata) -> list[str]:
         metadata.vm_name,
         "-m",
         str(config.memory_mb),
+        "-bios",
+        str(seabios_path),
         "-smp",
         str(config.vcpus),
         "-display",
@@ -97,6 +101,12 @@ def build_qemu_command(config: VMConfig, metadata: RunMetadata) -> list[str]:
 
 
 def start_vm(config: VMConfig, metadata: RunMetadata) -> RunMetadata:
+    metadata.runtime.qmp_socket = str(Path(metadata.paths["logs_dir"]) / "qmp.sock")
+    metadata.runtime.serial_socket = str(Path(metadata.paths["serial_dir"]) / "console.sock")
+    metadata.runtime.serial_log = str(Path(metadata.paths["serial_dir"]) / "console.log")
+    metadata.runtime.process_log = str(Path(metadata.paths["logs_dir"]) / "qemu.log")
+    metadata.runtime.serial_log_offset = _serial_log_size(Path(metadata.runtime.serial_log)) if config.serial_log_enabled else None
+
     command = build_qemu_command(config, metadata)
     run_command(command)
 
@@ -106,10 +116,6 @@ def start_vm(config: VMConfig, metadata: RunMetadata) -> RunMetadata:
 
     metadata.runtime.pid = int(pidfile.read_text(encoding="utf-8").strip())
     metadata.runtime.pidfile = str(pidfile)
-    metadata.runtime.qmp_socket = str(Path(metadata.paths["logs_dir"]) / "qmp.sock")
-    metadata.runtime.serial_socket = str(Path(metadata.paths["serial_dir"]) / "console.sock")
-    metadata.runtime.serial_log = str(Path(metadata.paths["serial_dir"]) / "console.log")
-    metadata.runtime.process_log = str(Path(metadata.paths["logs_dir"]) / "qemu.log")
     metadata.state = "running"
     return metadata
 
@@ -194,3 +200,10 @@ def _is_running(pid: int) -> bool:
     except OSError:
         return False
     return True
+
+
+def _serial_log_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0

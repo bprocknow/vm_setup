@@ -1,0 +1,11 @@
+[FAILED] Failed to start NetworkManager-wait-online.service - Network Manager Wait Online.
+cloud-init[728]: ci-info: +--------+------+----------------------------+-----------+-------+-------------------+
+cloud-init[728]: ci-info: | Device |  Up  |          Address           |    Mask   | Scope |     Hw-Address    |
+cloud-init[728]: ci-info: +--------+------+----------------------------+-----------+-------+-------------------+
+cloud-init[728]: ci-info: |  ens3  | True | fe80::5054:ff:fef6:6511/64 |     .     |  link | 52:54:00:f6:65:11 |
+cloud-init[728]: ci-info: |   lo   | True |         127.0.0.1          | 255.0.0.0 |  host |         .         |
+cloud-init[728]: ci-info: +--------+------+----------------------------+-----------+-------+-------------------+
+[  81.710261] cloud-init[728]: >>> Curl error (6): Could not resolve hostname for https://mirrors.fedoraproject
+[  81.999506] cloud-init[728]: 2026-03-29 21:19:09,626 - log_util.py[WARNING]: Failure when attempting to install packages: ['gcc', 'make', 'git', 'vim']
+[ 1091] [  OK  ] Started sshd.service - OpenSSH server daemon.
+[FAILED] Failed to start cloud-final.service - Cloud-init: Final Stage.

@@ -22,6 +22,7 @@ PAYLOAD_IMAGE_NAME = "payload.img"
 PAYLOAD_IMAGE_ALIGN_BYTES = 4 * 1024 * 1024
 PAYLOAD_IMAGE_MIN_BYTES = 128 * 1024 * 1024
 PAYLOAD_IMAGE_BASE_OVERHEAD_BYTES = 64 * 1024 * 1024
+PRIMARY_NETWORK_ID = "primary"
 
 
 def render_cloud_init_artifacts(config: VMConfig, metadata: RunMetadata) -> None:
@@ -38,15 +39,7 @@ def render_cloud_init_artifacts(config: VMConfig, metadata: RunMetadata) -> None
         "local-hostname": metadata.hostname,
     }
 
-    network_config = {
-        "version": 2,
-        "ethernets": {
-            "eth0": {
-                "dhcp4": True,
-                "dhcp6": False,
-            }
-        },
-    }
+    network_config = build_network_config(metadata)
 
     user_data_path = cloud_init_dir / "user-data"
     meta_data_path = cloud_init_dir / "meta-data"
@@ -74,6 +67,21 @@ def render_cloud_init_artifacts(config: VMConfig, metadata: RunMetadata) -> None
     metadata.runtime.payload_image = str(payload_image_path)
     metadata.runtime.payload_filesystem = PAYLOAD_FILESYSTEM
     metadata.runtime.payload_label = PAYLOAD_LABEL
+
+
+def build_network_config(metadata: RunMetadata) -> dict[str, Any]:
+    return {
+        "version": 2,
+        "ethernets": {
+            PRIMARY_NETWORK_ID: {
+                "match": {
+                    "macaddress": metadata.mac_address.lower(),
+                },
+                "dhcp4": True,
+                "dhcp6": False,
+            }
+        },
+    }
 
 
 def stage_payload(config: VMConfig, metadata: RunMetadata, payload_dir: Path) -> None:

@@ -10,7 +10,7 @@ from pathlib import Path
 from .config import load_config, validate_host_requirements
 from .errors import AppError, ValidationError
 from .logging_utils import configure_logging
-from .network import maybe_detect_ip
+from .network import assess_network_readiness, maybe_detect_ip
 from .models import VMConfig
 from .provision import render_cloud_init_artifacts
 from .qemu import attach_console, create_overlay, start_vm, stop_vm
@@ -25,6 +25,7 @@ from .runs import (
     load_metadata,
     persist_run_config,
     refresh_runtime_state,
+    reset_network_observation,
     save_metadata,
 )
 
@@ -79,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
             for metadata in list_runs(work_root):
                 metadata = refresh_runtime_state(metadata)
                 maybe_detect_ip(metadata)
-                save_metadata(metadata)
+                _save_metadata_best_effort(metadata)
                 print(
                     "\t".join(
                         [
@@ -167,6 +168,7 @@ def create_run(config_path: Path, work_root: Path, *, verbose: bool = False) -> 
         metadata.overlay_path = str(overlay)
         render_cloud_init_artifacts(config, metadata)
         metadata = start_vm(config, metadata)
+        metadata = assess_network_readiness(metadata)
         save_metadata(metadata)
     except AppError as exc:
         metadata.state = "failed"
@@ -181,8 +183,11 @@ def start_existing_run(run_id: str, work_root: Path):
     metadata = refresh_runtime_state(load_metadata(work_root, run_id))
     if metadata.state == "running":
         return metadata
+    metadata = reset_network_observation(metadata)
+    _save_metadata_best_effort(metadata)
     config = load_config(Path(metadata.normalized_config_path))
     metadata = start_vm(config, metadata)
+    metadata = assess_network_readiness(metadata)
     save_metadata(metadata)
     return metadata
 
@@ -205,7 +210,7 @@ def destroy_run(run_id: str, work_root: Path) -> None:
 def format_status(metadata):
     metadata = refresh_runtime_state(metadata)
     maybe_detect_ip(metadata)
-    save_metadata(metadata)
+    _save_metadata_best_effort(metadata)
     lines = [
         f"run_id: {metadata.run_id}",
         f"state: {metadata.state}",
@@ -217,6 +222,10 @@ def format_status(metadata):
         f"bridge: {metadata.bridge_name}",
         f"mac_address: {metadata.mac_address}",
         f"detected_ip: {metadata.detected_ip or 'unknown'}",
+        f"detected_ip_source: {metadata.detected_ip_source or 'unknown'}",
+        f"readiness_state: {metadata.readiness_state}",
+        f"readiness_reason: {metadata.readiness_reason or 'none'}",
+        f"readiness_source: {metadata.readiness_source or 'unknown'}",
         f"overlay: {metadata.overlay_path}",
         f"base_image: {metadata.base_image_path}",
         f"work_dir: {metadata.paths['root']}",
@@ -233,7 +242,7 @@ def format_status(metadata):
 def format_ssh_info(metadata):
     metadata = refresh_runtime_state(metadata)
     maybe_detect_ip(metadata)
-    save_metadata(metadata)
+    _save_metadata_best_effort(metadata)
     host = metadata.detected_ip or metadata.hostname
     lines = [
         f"run_id: {metadata.run_id}",
@@ -242,8 +251,15 @@ def format_ssh_info(metadata):
         f"bridge: {metadata.bridge_name}",
         f"mac_address: {metadata.mac_address}",
         f"detected_ip: {metadata.detected_ip or 'unknown'}",
-        f"ssh_command: ssh root@{host}",
+        f"detected_ip_source: {metadata.detected_ip_source or 'unknown'}",
+        f"readiness_state: {metadata.readiness_state}",
+        f"readiness_reason: {metadata.readiness_reason or 'none'}",
     ]
+    if metadata.detected_ip:
+        lines.append(f"ssh_command: ssh root@{host}")
+    else:
+        lines.append("ssh_command: unavailable")
+        lines.append(f"inspect_serial_log: {metadata.runtime.serial_log or 'n/a'}")
     return "\n".join(lines)
 
 
@@ -251,6 +267,13 @@ def _configure_run_logging_if_present(work_root: Path, run_id: str, verbose: boo
     metadata_file = work_root / run_id / "metadata.json"
     if metadata_file.exists():
         configure_logging(verbose=verbose, logfile=work_root / run_id / "logs" / "kernelvm.log")
+
+
+def _save_metadata_best_effort(metadata) -> None:
+    try:
+        save_metadata(metadata)
+    except OSError as exc:
+        LOGGER.warning("Could not update metadata for run %s: %s", metadata.run_id, exc)
 
 
 def generate_mac_address() -> str:

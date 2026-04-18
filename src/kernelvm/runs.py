@@ -88,6 +88,10 @@ def init_metadata(
         disk_size_gb=config.disk_size_gb,
         paths=paths.to_dict(),
         kernel_artifacts=config.kernel_artifacts.to_dict(),
+        detected_ip_source=None,
+        readiness_state="unknown",
+        readiness_reason=None,
+        readiness_source=None,
         runtime=RuntimeInfo(),
         errors=[],
     )
@@ -139,6 +143,15 @@ def refresh_runtime_state(metadata: RunMetadata) -> RunMetadata:
     if metadata.state == "running" and not process_is_running(metadata.runtime.pid):
         metadata.state = "stopped"
         metadata.runtime.pid = None
+    return metadata
+
+
+def reset_network_observation(metadata: RunMetadata) -> RunMetadata:
+    metadata.detected_ip = None
+    metadata.detected_ip_source = None
+    metadata.readiness_state = "unknown"
+    metadata.readiness_reason = None
+    metadata.readiness_source = None
     return metadata
 
 
