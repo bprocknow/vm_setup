@@ -101,12 +101,6 @@ def build_qemu_command(config: VMConfig, metadata: RunMetadata) -> list[str]:
 
 
 def start_vm(config: VMConfig, metadata: RunMetadata) -> RunMetadata:
-    metadata.runtime.qmp_socket = str(Path(metadata.paths["logs_dir"]) / "qmp.sock")
-    metadata.runtime.serial_socket = str(Path(metadata.paths["serial_dir"]) / "console.sock")
-    metadata.runtime.serial_log = str(Path(metadata.paths["serial_dir"]) / "console.log")
-    metadata.runtime.process_log = str(Path(metadata.paths["logs_dir"]) / "qemu.log")
-    metadata.runtime.serial_log_offset = _serial_log_size(Path(metadata.runtime.serial_log)) if config.serial_log_enabled else None
-
     command = build_qemu_command(config, metadata)
     run_command(command)
 
@@ -116,6 +110,10 @@ def start_vm(config: VMConfig, metadata: RunMetadata) -> RunMetadata:
 
     metadata.runtime.pid = int(pidfile.read_text(encoding="utf-8").strip())
     metadata.runtime.pidfile = str(pidfile)
+    metadata.runtime.qmp_socket = str(Path(metadata.paths["logs_dir"]) / "qmp.sock")
+    metadata.runtime.serial_socket = str(Path(metadata.paths["serial_dir"]) / "console.sock")
+    metadata.runtime.serial_log = str(Path(metadata.paths["serial_dir"]) / "console.log")
+    metadata.runtime.process_log = str(Path(metadata.paths["logs_dir"]) / "qemu.log")
     metadata.state = "running"
     return metadata
 
@@ -200,10 +198,3 @@ def _is_running(pid: int) -> bool:
     except OSError:
         return False
     return True
-
-
-def _serial_log_size(path: Path) -> int:
-    try:
-        return path.stat().st_size
-    except OSError:
-        return 0

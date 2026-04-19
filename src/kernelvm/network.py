@@ -76,25 +76,18 @@ def assess_network_readiness(metadata, *, timeout_seconds: int = 90, poll_interv
 
 
 def observe_network(metadata) -> NetworkObservation:
-    allow_saved_ip = metadata.runtime.serial_log_offset is None
-    detected_ip = metadata.detected_ip if allow_saved_ip else None
-    detected_ip_source = metadata.detected_ip_source if allow_saved_ip else None
+    detected_ip = metadata.detected_ip
+    detected_ip_source = metadata.detected_ip_source
 
-    serial_observation = (
-        inspect_serial_log(
-            Path(metadata.runtime.serial_log),
-            start_offset=metadata.runtime.serial_log_offset or 0,
-        )
-        if metadata.runtime.serial_log
-        else NetworkObservation()
-    )
+    if not detected_ip:
+        detected_ip, detected_ip_source = detect_ip_for_mac(metadata.mac_address)
+
+    serial_observation = inspect_serial_log(Path(metadata.runtime.serial_log)) if metadata.runtime.serial_log else NetworkObservation()
     bridge_diagnosis = diagnose_bridge(metadata.bridge_name)
 
-    if serial_observation.detected_ip:
+    if not detected_ip and serial_observation.detected_ip:
         detected_ip = serial_observation.detected_ip
         detected_ip_source = serial_observation.detected_ip_source
-    elif not bridge_diagnosis and not serial_observation.readiness_reason and not detected_ip:
-        detected_ip, detected_ip_source = detect_ip_for_mac(metadata.mac_address)
 
     if detected_ip:
         metadata.detected_ip = detected_ip
@@ -103,20 +96,14 @@ def observe_network(metadata) -> NetworkObservation:
         metadata.readiness_reason = None
         metadata.readiness_source = detected_ip_source
     elif bridge_diagnosis:
-        metadata.detected_ip = None
-        metadata.detected_ip_source = None
         metadata.readiness_state = READINESS_UNREADY
         metadata.readiness_reason = bridge_diagnosis
         metadata.readiness_source = HOST_BRIDGE_SOURCE
     elif serial_observation.readiness_reason:
-        metadata.detected_ip = None
-        metadata.detected_ip_source = None
         metadata.readiness_state = READINESS_UNREADY
         metadata.readiness_reason = serial_observation.readiness_reason
         metadata.readiness_source = serial_observation.readiness_source
     elif metadata.readiness_state == READINESS_UNKNOWN:
-        metadata.detected_ip = None
-        metadata.detected_ip_source = None
         metadata.readiness_state = READINESS_UNKNOWN
         metadata.readiness_reason = None
         metadata.readiness_source = None
@@ -130,21 +117,13 @@ def observe_network(metadata) -> NetworkObservation:
     )
 
 
-def inspect_serial_log(path: Path, *, start_offset: int = 0) -> NetworkObservation:
+def inspect_serial_log(path: Path) -> NetworkObservation:
     if not path.exists():
         return NetworkObservation()
 
     try:
-        with path.open("rb") as handle:
-            file_size = path.stat().st_size
-            if start_offset < 0 or start_offset > file_size:
-                start_offset = 0
-            handle.seek(start_offset)
-            text = handle.read().decode("utf-8", errors="ignore")
+        text = path.read_text(encoding="utf-8", errors="ignore")
     except OSError:
-        return NetworkObservation()
-
-    if not text:
         return NetworkObservation()
 
     detected_ip = _extract_ipv4_from_serial(text)

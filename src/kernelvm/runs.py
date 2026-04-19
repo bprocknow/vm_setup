@@ -146,15 +146,6 @@ def refresh_runtime_state(metadata: RunMetadata) -> RunMetadata:
     return metadata
 
 
-def reset_network_observation(metadata: RunMetadata) -> RunMetadata:
-    metadata.detected_ip = None
-    metadata.detected_ip_source = None
-    metadata.readiness_state = "unknown"
-    metadata.readiness_reason = None
-    metadata.readiness_source = None
-    return metadata
-
-
 def ensure_single_active_run(work_root: Path, requested_run_id: str | None = None) -> None:
     for metadata in list_runs(work_root):
         metadata = refresh_runtime_state(metadata)

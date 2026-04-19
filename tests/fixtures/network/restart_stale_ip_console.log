@@ -1,6 +1,0 @@
-[   14.003451] cloud-init[726]: ci-info: |  ens3  | True |       192.168.20.10        | 255.255.255.0 | global | 52:54:00:fb:89:73 |
-[   14.009479] cloud-init[726]: ci-info: |  ens3  | True | fe80::5054:ff:fefb:8973/64 |       .       |  link  | 52:54:00:fb:89:73 |
-ens3: 192.168.20.10 fe80::5054:ff:fefb:8973
-=== CURRENT BOOT ===
-[   82.164650] cloud-init[718]: ci-info: |  ens3  | True | fe80::5054:ff:fefb:8973/64 |     .     |  link | 52:54:00:fb:89:73 |
-[   83.101992] cloud-init[718]: Cloud-init v. 25.2 finished at Sat, 18 Apr 2026 16:29:58 +0000. Datasource DataSourceNoCloud [seed=/dev/vdb].  Up 83.09 seconds

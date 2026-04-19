@@ -98,32 +98,6 @@ class NetworkReadinessTests(unittest.TestCase):
             self.assertEqual(metadata.readiness_state, READINESS_UNREADY)
             self.assertIn("DNS resolution failed", metadata.readiness_reason or "")
 
-    def test_maybe_detect_ip_ignores_stale_saved_ip_for_current_boot_slice(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            serial_log = root / "console.log"
-            first_boot = "ens3: 192.168.20.10 fe80::5054:ff:fefb:8973\n"
-            second_boot = (
-                "Cloud-init v. 25.2 running 'init'\n"
-                "ci-info: |  ens3  | True | fe80::5054:ff:fefb:8973/64 |     .     |  link | 52:54:00:12:34:56 |\n"
-            )
-            serial_log.write_text(first_boot + second_boot, encoding="utf-8")
-            metadata = self._metadata(root, serial_log=serial_log)
-            metadata.detected_ip = "192.168.20.10"
-            metadata.detected_ip_source = "serial-log"
-            metadata.readiness_state = READINESS_READY
-            metadata.runtime.serial_log_offset = len(first_boot.encode("utf-8"))
-
-            with mock.patch("kernelvm.network.diagnose_bridge", return_value=None), mock.patch(
-                "kernelvm.network.detect_ip_for_mac", return_value=("192.168.20.10", HOST_NEIGH_SOURCE)
-            ):
-                detected_ip = maybe_detect_ip(metadata)
-
-            self.assertIsNone(detected_ip)
-            self.assertIsNone(metadata.detected_ip)
-            self.assertEqual(metadata.readiness_state, READINESS_UNREADY)
-            self.assertIn("link-local IPv6", metadata.readiness_reason or "")
-
     def test_maybe_detect_ip_prefers_host_bridge_diagnosis_when_present(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -165,16 +139,3 @@ class NetworkReadinessTests(unittest.TestCase):
 
             self.assertIsNone(observation.detected_ip)
             self.assertIsNone(observation.readiness_reason)
-
-    def test_inspect_serial_log_uses_current_boot_offset(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "console.log"
-            fixture = (Path(__file__).parent / "fixtures" / "network" / "restart_stale_ip_console.log").read_text(encoding="utf-8")
-            split_marker = "=== CURRENT BOOT ===\n"
-            split_index = fixture.index(split_marker) + len(split_marker)
-            path.write_text(fixture, encoding="utf-8")
-
-            observation = inspect_serial_log(path, start_offset=split_index)
-
-            self.assertIsNone(observation.detected_ip)
-            self.assertIn("link-local IPv6", observation.readiness_reason or "")

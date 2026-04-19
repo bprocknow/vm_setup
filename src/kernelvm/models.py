@@ -125,7 +125,6 @@ class RuntimeInfo:
     qmp_socket: str | None = None
     serial_socket: str | None = None
     serial_log: str | None = None
-    serial_log_offset: int | None = None
     process_log: str | None = None
     pidfile: str | None = None
     seed_image: str | None = None

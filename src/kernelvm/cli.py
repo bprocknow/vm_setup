@@ -25,7 +25,6 @@ from .runs import (
     load_metadata,
     persist_run_config,
     refresh_runtime_state,
-    reset_network_observation,
     save_metadata,
 )
 
@@ -183,8 +182,6 @@ def start_existing_run(run_id: str, work_root: Path):
     metadata = refresh_runtime_state(load_metadata(work_root, run_id))
     if metadata.state == "running":
         return metadata
-    metadata = reset_network_observation(metadata)
-    _save_metadata_best_effort(metadata)
     config = load_config(Path(metadata.normalized_config_path))
     metadata = start_vm(config, metadata)
     metadata = assess_network_readiness(metadata)

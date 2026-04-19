@@ -164,7 +164,6 @@ serial_log_enabled: true
 - The tool treats IP discovery as best effort. `ssh-info` and `status` always show hostname and MAC address, and add the guest IP when the host can discover it.
 - Bridged guest networking is considered ready only when the tool observes a usable IPv4 address; if that never appears, `status` and `ssh-info` report the recorded readiness failure reason instead of only showing an unknown IP.
 - Guest network config is rendered against the launched NIC's MAC address rather than assuming a fixed guest interface name such as `eth0`.
-- Restarted runs reassess network reachability from the current boot only; historical IPs from older appended serial-log sessions are not reused as current SSH coordinates.
 - `create` refuses to start a second run while another run is active.
 - The tool does not mutate the base image.
 - New runs attach an ext4 payload image for staged files and kernel artifacts; legacy runs that only have the older payload directory metadata still start with the previous compatibility path.
