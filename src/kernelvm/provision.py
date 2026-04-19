@@ -279,20 +279,20 @@ def build_firstboot_script(config: VMConfig) -> str:
     optional_artifact_steps = []
     if system_map_name:
         optional_artifact_steps.append(
-            f"""if [[ -f /var/lib/kernelvm/kernel-inputs/{system_map_name} ]]; then
-  cp -a /var/lib/kernelvm/kernel-inputs/{system_map_name} /boot/ || true
+            f"""if [[ -f "$KERNEL_ROOT/{system_map_name}" ]]; then
+  cp -a "$KERNEL_ROOT/{system_map_name}" /boot/ || true
 fi"""
         )
     if config_name:
         optional_artifact_steps.append(
-            f"""if [[ -f /var/lib/kernelvm/kernel-inputs/{config_name} ]]; then
-  cp -a /var/lib/kernelvm/kernel-inputs/{config_name} /boot/config-kernelvm || true
+            f"""if [[ -f "$KERNEL_ROOT/{config_name}" ]]; then
+  cp -a "$KERNEL_ROOT/{config_name}" /boot/config-kernelvm || true
 fi"""
         )
     if initramfs_name:
         optional_artifact_steps.append(
-            f"""if [[ -f /var/lib/kernelvm/kernel-inputs/{initramfs_name} ]]; then
-  cp -a /var/lib/kernelvm/kernel-inputs/{initramfs_name} /boot/ || true
+            f"""if [[ -f "$KERNEL_ROOT/{initramfs_name}" ]]; then
+  cp -a "$KERNEL_ROOT/{initramfs_name}" /boot/ || true
 fi"""
         )
 
@@ -313,15 +313,12 @@ fi"""
         {"\n".join(copy_commands) if copy_commands else "true"}
 
         KERNEL_ROOT="$PAYLOAD_ROOT/kernel"
-        mkdir -p /var/lib/kernelvm/kernel-inputs
-        cp -a "$KERNEL_ROOT/." /var/lib/kernelvm/kernel-inputs/
-
-        if [[ -f /var/lib/kernelvm/kernel-inputs/{kernel_image_name} ]]; then
-          cp -a /var/lib/kernelvm/kernel-inputs/{kernel_image_name} /boot/
+        if [[ -f "$KERNEL_ROOT/{kernel_image_name}" ]]; then
+          cp -a "$KERNEL_ROOT/{kernel_image_name}" /boot/
         fi
-        if [[ -f /var/lib/kernelvm/kernel-inputs/{modules_archive_name} ]]; then
+        if [[ -f "$KERNEL_ROOT/{modules_archive_name}" ]]; then
           mkdir -p /lib/modules
-          tar --auto-compress -xf /var/lib/kernelvm/kernel-inputs/{modules_archive_name} -C /
+          tar --auto-compress -xf "$KERNEL_ROOT/{modules_archive_name}" -C /
         fi
         {"\n".join(optional_artifact_steps) if optional_artifact_steps else "true"}
 

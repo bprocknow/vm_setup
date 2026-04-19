@@ -75,6 +75,9 @@ def build_qemu_command(config: VMConfig, metadata: RunMetadata) -> list[str]:
 
     command.extend(_disk_args(config.disk_bus, Path(metadata.overlay_path), "osdisk", format_name="qcow2"))
 
+    if config.qemu_gdb_debug:
+        command.extend(["-s", "-S"])
+
     seed_image = metadata.runtime.seed_image
     if not seed_image:
         raise AppError("Seed image missing from runtime metadata")

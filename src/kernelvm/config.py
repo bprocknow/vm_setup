@@ -76,6 +76,10 @@ def validate_config(raw: dict[str, Any], *, config_path: Path | None = None) -> 
     if net_model not in SUPPORTED_NET_MODELS:
         errors.append(f"net_model must be one of: {', '.join(sorted(SUPPORTED_NET_MODELS))}")
 
+    qemu_gdb_debug = raw.get("qemu_gdb_debug", False)
+    if not isinstance(qemu_gdb_debug, bool):
+        errors.append("qemu_gdb_debug must be a boolean")
+
     serial_log_enabled = raw.get("serial_log_enabled", True)
     if not isinstance(serial_log_enabled, bool):
         errors.append("serial_log_enabled must be a boolean")
@@ -157,6 +161,7 @@ def validate_config(raw: dict[str, Any], *, config_path: Path | None = None) -> 
         kernel_cmdline_append=kernel_cmdline_append,
         disk_bus=disk_bus,
         net_model=net_model,
+        qemu_gdb_debug=qemu_gdb_debug,
         serial_log_enabled=serial_log_enabled,
         preserve_overlay_on_stop=preserve_overlay_on_stop,
         static_mac_address=static_mac_address,

@@ -129,6 +129,7 @@ first_boot_commands:
   - systemctl enable sshd
 
 kernel_artifacts:
+  # These stay as absolute host input paths; kernelvm stages them into the run payload.
   kernel_image: /path/to/bzImage
   kernel_modules_archive: /path/to/modules.tar.zst
   system_map: /path/to/System.map
@@ -138,6 +139,7 @@ kernel_cmdline_append:
   - console=ttyS0,115200n8
   - earlycon
 
+qemu_gdb_debug: false
 serial_log_enabled: true
 ```
 
@@ -159,3 +161,5 @@ serial_log_enabled: true
 - `create` refuses to start a second run while another run is active.
 - The tool does not mutate the base image.
 - New runs attach an ext4 payload image for staged files and kernel artifacts; legacy runs that only have the older payload directory metadata still start with the previous compatibility path.
+- `qemu_gdb_debug: true` adds `-s -S` to the QEMU launch, so the guest starts paused until a debugger continues execution.
+- Kernel artifact config entries such as `kernel_image` are absolute host input paths; any internal staging path is temporary implementation detail, not part of the config contract.

@@ -61,6 +61,7 @@ class VMConfig:
     kernel_cmdline_append: list[str] = field(default_factory=list)
     disk_bus: str = "virtio"
     net_model: str = "virtio"
+    qemu_gdb_debug: bool = False
     serial_log_enabled: bool = True
     preserve_overlay_on_stop: bool = True
     static_mac_address: str | None = None
@@ -96,6 +97,7 @@ class VMConfig:
             "kernel_cmdline_append": list(self.kernel_cmdline_append),
             "disk_bus": self.disk_bus,
             "net_model": self.net_model,
+            "qemu_gdb_debug": self.qemu_gdb_debug,
             "serial_log_enabled": self.serial_log_enabled,
             "preserve_overlay_on_stop": self.preserve_overlay_on_stop,
             "static_mac_address": self.static_mac_address,

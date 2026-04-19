@@ -18,6 +18,7 @@ from kernelvm.provision import (
     build_payload_locator_script,
     calculate_payload_image_size,
     render_cloud_init_artifacts,
+    stage_payload,
 )
 
 
@@ -94,6 +95,9 @@ class ProvisioningTests(unittest.TestCase):
             script = build_firstboot_script(config)
             self.assertIn("grubby --set-default", script)
             self.assertIn("console=ttyS0,115200n8 earlycon", script)
+            self.assertIn('KERNEL_ROOT="$PAYLOAD_ROOT/kernel"', script)
+            self.assertIn('cp -a "$KERNEL_ROOT/', script)
+            self.assertNotIn("/var/lib/kernelvm/kernel-inputs", script)
             self.assertNotIn("None", script)
 
     def test_payload_locator_script_supports_ext4_and_legacy_vfat(self) -> None:
@@ -139,6 +143,50 @@ class ProvisioningTests(unittest.TestCase):
             self.assertEqual(network_config["ethernets"][PRIMARY_NETWORK_ID]["match"]["macaddress"], "52:54:00:12:34:56")
             self.assertTrue(network_config["ethernets"][PRIMARY_NETWORK_ID]["dhcp4"])
             self.assertFalse(network_config["ethernets"][PRIMARY_NETWORK_ID]["dhcp6"])
+
+    def test_stage_payload_copies_kernel_artifacts_from_absolute_host_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            artifact_root = root / "outside-artifacts"
+            artifact_root.mkdir()
+            (root / "base.qcow2").write_text("x", encoding="utf-8")
+            kernel_image = artifact_root / "bzImage"
+            modules_archive = artifact_root / "modules.tar.zst"
+            system_map = artifact_root / "System.map"
+            config_path = artifact_root / "config"
+            for path, content in (
+                (kernel_image, "kernel-image"),
+                (modules_archive, "modules-archive"),
+                (system_map, "system-map"),
+                (config_path, "kernel-config"),
+            ):
+                path.write_text(content, encoding="utf-8")
+
+            config = VMConfig(
+                base_image_path=root / "base.qcow2",
+                vm_name="kernel-test",
+                vm_name_prefix=None,
+                vcpus=2,
+                memory_mb=2048,
+                disk_size_gb=20,
+                bridge_name="br0",
+                kernel_artifacts=KernelArtifacts(
+                    kernel_image=kernel_image,
+                    kernel_modules_archive=modules_archive,
+                    system_map=system_map,
+                    config=config_path,
+                ),
+                root_ssh_authorized_keys=["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKey comment"],
+            )
+            metadata = self._metadata(root)
+            payload_dir = root / "payload"
+
+            stage_payload(config, metadata, payload_dir)
+
+            self.assertEqual((payload_dir / "kernel" / "bzImage").read_text(encoding="utf-8"), "kernel-image")
+            self.assertEqual((payload_dir / "kernel" / "modules.tar.zst").read_text(encoding="utf-8"), "modules-archive")
+            self.assertEqual((payload_dir / "kernel" / "System.map").read_text(encoding="utf-8"), "system-map")
+            self.assertEqual((payload_dir / "kernel" / "config").read_text(encoding="utf-8"), "kernel-config")
 
     def test_build_payload_image_sizes_for_large_modules_archive(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
