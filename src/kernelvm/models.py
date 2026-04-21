@@ -134,6 +134,10 @@ class RuntimeInfo:
     payload_image: str | None = None
     payload_filesystem: str | None = None
     payload_label: str | None = None
+    direct_kernel_boot: bool = False
+    direct_kernel_image: str | None = None
+    direct_kernel_initramfs: str | None = None
+    direct_kernel_cmdline: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -182,11 +182,22 @@ def start_existing_run(run_id: str, work_root: Path):
     metadata = refresh_runtime_state(load_metadata(work_root, run_id))
     if metadata.state == "running":
         return metadata
-    config = load_config(Path(metadata.normalized_config_path))
-    metadata = start_vm(config, metadata)
-    metadata = assess_network_readiness(metadata)
-    save_metadata(metadata)
-    return metadata
+    try:
+        config = load_config(Path(metadata.normalized_config_path))
+        metadata = start_vm(config, metadata)
+        metadata = assess_network_readiness(metadata)
+        save_metadata(metadata)
+        return metadata
+    except ValidationError as exc:
+        metadata.state = "failed"
+        metadata.errors.extend(exc.errors)
+        save_metadata(metadata)
+        raise
+    except AppError as exc:
+        metadata.state = "failed"
+        metadata.errors.append(exc.message)
+        save_metadata(metadata)
+        raise
 
 
 def stop_existing_run(run_id: str, work_root: Path):
@@ -230,6 +241,10 @@ def format_status(metadata):
         f"artifacts_dir: {metadata.paths['artifacts_dir']}",
         f"payload_image: {metadata.runtime.payload_image or 'legacy-payload-dir'}",
         f"payload_filesystem: {metadata.runtime.payload_filesystem or 'vfat-dir-share'}",
+        f"direct_kernel_boot: {'enabled' if metadata.runtime.direct_kernel_boot else 'disabled'}",
+        f"direct_kernel_image: {metadata.runtime.direct_kernel_image or 'n/a'}",
+        f"direct_kernel_initramfs: {metadata.runtime.direct_kernel_initramfs or 'n/a'}",
+        f"direct_kernel_cmdline: {metadata.runtime.direct_kernel_cmdline or 'n/a'}",
         f"logs_dir: {metadata.paths['logs_dir']}",
         f"serial_log: {metadata.runtime.serial_log or 'n/a'}",
     ]

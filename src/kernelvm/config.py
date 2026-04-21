@@ -135,6 +135,8 @@ def validate_config(raw: dict[str, Any], *, config_path: Path | None = None) -> 
 
     kernel_raw = raw.get("kernel_artifacts")
     kernel_artifacts = _parse_kernel_artifacts(kernel_raw, errors)
+    if kernel_artifacts.kernel_image != Path(".") and not _has_kernel_arg(kernel_cmdline_append, "root="):
+        errors.append("kernel_cmdline_append must include a root=... entry when kernel_artifacts.kernel_image is configured")
 
     overrides = raw.get("cloud_init_user_data_overrides", {})
     if overrides is None:
@@ -258,3 +260,7 @@ def _parse_kernel_artifacts(value: Any, errors: list[str]) -> KernelArtifacts:
         config=artifact("config", required=False),
         initramfs=artifact("initramfs", required=False),
     )
+
+
+def _has_kernel_arg(args: list[str], prefix: str) -> bool:
+    return any(item.startswith(prefix) for item in args)

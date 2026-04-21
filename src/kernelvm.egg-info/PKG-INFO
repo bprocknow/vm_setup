@@ -137,14 +137,17 @@ first_boot_commands:
   - systemctl enable sshd
 
 kernel_artifacts:
-  # These stay as absolute host input paths; kernelvm stages them into the run payload.
+  # These stay as absolute host input paths. kernelvm boots kernel_image directly through QEMU
+  # and stages only the non-boot artifacts needed during provisioning into the run payload.
   kernel_image: /path/to/bzImage
   kernel_modules_archive: /path/to/modules.tar.zst
   system_map: /path/to/System.map
   config: /path/to/config
+  initramfs: /path/to/initramfs.img  # optional, but often needed for Fedora cloud guests
 
 kernel_cmdline_append:
-  - console=ttyS0,115200n8
+  - root=UUID=<guest-rootfs-uuid>    # required for direct kernel boot
+  - console=ttyS0,115200n8           # optional if serial_log_enabled=true; kernelvm adds it if omitted
   - earlycon
 
 qemu_gdb_debug: false
@@ -154,7 +157,7 @@ serial_log_enabled: true
 ## Workflow
 
 1. Validate the config and host prerequisites with `kernelvm validate-config`.
-2. Create a new run with `kernelvm create`, which creates a fresh overlay, stages the payload directory, builds `artifacts/payload.img`, renders cloud-init artifacts, and launches the VM.
+2. Create a new run with `kernelvm create`, which creates a fresh overlay, stages the payload directory, builds `artifacts/payload.img`, renders cloud-init artifacts, and launches QEMU with `-kernel` pointing at the configured `kernel_image`.
 3. Inspect the deployment with `kernelvm status` and `kernelvm ssh-info`.
    These commands now report guest network readiness, the detected IP source, and any recorded readiness failure reason.
 4. Use `kernelvm console --attach` for serial access or inspect `serial/console.log`.
@@ -171,3 +174,4 @@ serial_log_enabled: true
 - New runs attach an ext4 payload image for staged files and kernel artifacts; legacy runs that only have the older payload directory metadata still start with the previous compatibility path.
 - `qemu_gdb_debug: true` adds `-s -S` to the QEMU launch, so the guest starts paused until a debugger continues execution.
 - Kernel artifact config entries such as `kernel_image` are absolute host input paths; any internal staging path is temporary implementation detail, not part of the config contract.
+- Direct kernel boot requires a usable `root=` argument in `kernel_cmdline_append`. Use the guest root filesystem UUID or another guest-valid root selector instead of relying on the guest bootloader to provide it.

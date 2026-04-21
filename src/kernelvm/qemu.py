@@ -17,6 +17,7 @@ from .qmp import qmp_execute
 from .utils import ensure_command, run_command
 
 LOGGER = logging.getLogger(__name__)
+DEFAULT_SERIAL_CONSOLE = "console=ttyS0,115200n8"
 
 
 def create_overlay(config: VMConfig, metadata: RunMetadata) -> Path:
@@ -74,6 +75,10 @@ def build_qemu_command(config: VMConfig, metadata: RunMetadata) -> list[str]:
     ]
 
     command.extend(_disk_args(config.disk_bus, Path(metadata.overlay_path), "osdisk", format_name="qcow2"))
+    _record_direct_boot_inputs(config, metadata)
+    command.extend(["-kernel", str(config.kernel_artifacts.kernel_image), "-append", metadata.runtime.direct_kernel_cmdline or ""])
+    if config.kernel_artifacts.initramfs:
+        command.extend(["-initrd", str(config.kernel_artifacts.initramfs)])
 
     if config.qemu_gdb_debug:
         command.extend(["-s", "-S"])
@@ -193,6 +198,21 @@ def _resolve_net_model(model: str) -> str:
     if model == "virtio":
         return "virtio-net-pci"
     return model
+
+
+def _record_direct_boot_inputs(config: VMConfig, metadata: RunMetadata) -> None:
+    cmdline_items = list(config.kernel_cmdline_append)
+    if not any(item.startswith("root=") for item in cmdline_items):
+        raise AppError("Direct kernel boot requires a root=... entry in kernel_cmdline_append")
+    if config.serial_log_enabled and not any(item.startswith("console=") for item in cmdline_items):
+        cmdline_items.append(DEFAULT_SERIAL_CONSOLE)
+
+    metadata.runtime.direct_kernel_boot = True
+    metadata.runtime.direct_kernel_image = str(config.kernel_artifacts.kernel_image)
+    metadata.runtime.direct_kernel_initramfs = (
+        str(config.kernel_artifacts.initramfs) if config.kernel_artifacts.initramfs else None
+    )
+    metadata.runtime.direct_kernel_cmdline = " ".join(cmdline_items)
 
 
 def _is_running(pid: int) -> bool:

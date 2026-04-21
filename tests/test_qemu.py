@@ -64,6 +64,7 @@ class QemuCommandTests(unittest.TestCase):
                     kernel_modules_archive=root / "modules.tar.zst",
                 ),
                 root_ssh_authorized_keys=["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKey comment"],
+                kernel_cmdline_append=["root=/dev/vda3"],
             )
 
             with (
@@ -75,12 +76,17 @@ class QemuCommandTests(unittest.TestCase):
             command_string = " ".join(command)
             self.assertIn("bridge,br=br0", command_string)
             self.assertIn("-bios /usr/share/seabios/bios.bin", command_string)
+            self.assertIn(f"-kernel {root / 'bzImage'}", command_string)
+            self.assertIn("-append root=/dev/vda3 console=ttyS0,115200n8", command_string)
             self.assertIn("overlay.qcow2", command_string)
             self.assertIn("console.sock", command_string)
             self.assertIn("payload.img", command_string)
             self.assertNotIn("-s", command)
             self.assertNotIn("-S", command)
             self.assertNotIn("fat:ro:", command_string)
+            self.assertTrue(metadata.runtime.direct_kernel_boot)
+            self.assertEqual(metadata.runtime.direct_kernel_image, str(root / "bzImage"))
+            self.assertEqual(metadata.runtime.direct_kernel_cmdline, "root=/dev/vda3 console=ttyS0,115200n8")
 
     def test_qemu_command_falls_back_to_legacy_payload_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -133,6 +139,7 @@ class QemuCommandTests(unittest.TestCase):
                     kernel_modules_archive=root / "modules.tar.zst",
                 ),
                 root_ssh_authorized_keys=["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKey comment"],
+                kernel_cmdline_append=["root=/dev/vda3", "console=ttyS0,115200n8"],
             )
 
             with (
@@ -143,6 +150,7 @@ class QemuCommandTests(unittest.TestCase):
 
             self.assertNotIn("-s", command)
             self.assertNotIn("-S", command)
+            self.assertIn("-kernel", command)
             self.assertIn("fat:ro:", " ".join(command))
 
     def test_qemu_command_adds_gdb_debug_flags_when_enabled(self) -> None:
@@ -196,6 +204,7 @@ class QemuCommandTests(unittest.TestCase):
                     kernel_modules_archive=root / "modules.tar.zst",
                 ),
                 root_ssh_authorized_keys=["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKey comment"],
+                kernel_cmdline_append=["root=/dev/vda3", "console=ttyS0,115200n8"],
                 qemu_gdb_debug=True,
             )
 
@@ -207,3 +216,68 @@ class QemuCommandTests(unittest.TestCase):
 
             self.assertIn("-s", command)
             self.assertIn("-S", command)
+
+    def test_qemu_command_passes_initrd_when_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            metadata = RunMetadata(
+                run_id="run-1",
+                vm_name="kernel-test",
+                hostname="kernel-test",
+                state="created",
+                created_at="now",
+                updated_at="now",
+                config_path=str(root / "config.yaml"),
+                normalized_config_path=str(root / "work" / "run-1" / "config" / "normalized-config.yaml"),
+                base_image_path=str(root / "base.qcow2"),
+                overlay_path=str(root / "work" / "run-1" / "overlay" / "overlay.qcow2"),
+                bridge_name="br0",
+                mac_address="52:54:00:12:34:56",
+                detected_ip=None,
+                disk_bus="virtio",
+                net_model="virtio",
+                vcpus=2,
+                memory_mb=2048,
+                disk_size_gb=20,
+                paths={
+                    "root": str(root / "work" / "run-1"),
+                    "config_dir": str(root / "work" / "run-1" / "config"),
+                    "logs_dir": str(root / "work" / "run-1" / "logs"),
+                    "serial_dir": str(root / "work" / "run-1" / "serial"),
+                    "cloud_init_dir": str(root / "work" / "run-1" / "cloud-init"),
+                    "overlay_dir": str(root / "work" / "run-1" / "overlay"),
+                    "artifacts_dir": str(root / "work" / "run-1" / "artifacts"),
+                },
+                kernel_artifacts={},
+                runtime=RuntimeInfo(
+                    seed_image=str(root / "work" / "run-1" / "cloud-init" / "seed.img"),
+                    payload_image=str(root / "work" / "run-1" / "artifacts" / "payload.img"),
+                ),
+                errors=[],
+            )
+            config = VMConfig(
+                base_image_path=root / "base.qcow2",
+                vm_name="kernel-test",
+                vm_name_prefix=None,
+                vcpus=2,
+                memory_mb=2048,
+                disk_size_gb=20,
+                bridge_name="br0",
+                kernel_artifacts=KernelArtifacts(
+                    kernel_image=root / "bzImage",
+                    kernel_modules_archive=root / "modules.tar.zst",
+                    initramfs=root / "initramfs.img",
+                ),
+                root_ssh_authorized_keys=["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKey comment"],
+                kernel_cmdline_append=["root=/dev/vda3", "console=ttyS0,115200n8"],
+            )
+
+            with (
+                mock.patch("kernelvm.qemu.ensure_command", return_value="qemu-system-x86_64"),
+                mock.patch("kernelvm.qemu.resolve_legacy_bios_path", return_value=Path("/usr/share/seabios/bios.bin")),
+            ):
+                command = build_qemu_command(config, metadata)
+
+            self.assertIn("-initrd", command)
+            self.assertIn(str(root / "initramfs.img"), command)
+            self.assertEqual(metadata.runtime.direct_kernel_initramfs, str(root / "initramfs.img"))

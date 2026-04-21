@@ -114,7 +114,7 @@ def stage_payload(config: VMConfig, metadata: RunMetadata, payload_dir: Path) ->
             }
         )
 
-    for key, path in config.kernel_artifacts.to_dict().items():
+    for key, path in _payload_kernel_artifacts(config).items():
         if path is None:
             continue
         source = Path(path)
@@ -258,21 +258,9 @@ def build_firstboot_script(config: VMConfig) -> str:
         else:
             copy_commands.append(f'cp -a "{payload_item}" "{copy_spec.dest}"')
 
-    cmdline = " ".join(config.kernel_cmdline_append)
-    kernel_image_name = Path(config.kernel_artifacts.kernel_image).name
     modules_archive_name = Path(config.kernel_artifacts.kernel_modules_archive).name
     system_map_name = Path(config.kernel_artifacts.system_map).name if config.kernel_artifacts.system_map else None
     config_name = Path(config.kernel_artifacts.config).name if config.kernel_artifacts.config else None
-    initramfs_name = Path(config.kernel_artifacts.initramfs).name if config.kernel_artifacts.initramfs else None
-    selinux_cmd = ""
-    if config.selinux_mode:
-        selinux_cmd = dedent(
-            f"""\
-            if command -v grubby >/dev/null 2>&1; then
-              grubby --update-kernel=ALL --args='selinux={1 if config.selinux_mode == "enforcing" else 0}' || true
-            fi
-            """
-        )
 
     first_boot_commands = "\n".join(config.first_boot_commands) if config.first_boot_commands else "true"
 
@@ -289,13 +277,6 @@ fi"""
   cp -a "$KERNEL_ROOT/{config_name}" /boot/config-kernelvm || true
 fi"""
         )
-    if initramfs_name:
-        optional_artifact_steps.append(
-            f"""if [[ -f "$KERNEL_ROOT/{initramfs_name}" ]]; then
-  cp -a "$KERNEL_ROOT/{initramfs_name}" /boot/ || true
-fi"""
-        )
-
     return dedent(
         f"""\
         #!/bin/bash
@@ -313,21 +294,12 @@ fi"""
         {"\n".join(copy_commands) if copy_commands else "true"}
 
         KERNEL_ROOT="$PAYLOAD_ROOT/kernel"
-        if [[ -f "$KERNEL_ROOT/{kernel_image_name}" ]]; then
-          cp -a "$KERNEL_ROOT/{kernel_image_name}" /boot/
-        fi
         if [[ -f "$KERNEL_ROOT/{modules_archive_name}" ]]; then
           mkdir -p /lib/modules
           tar --auto-compress -xf "$KERNEL_ROOT/{modules_archive_name}" -C /
         fi
         {"\n".join(optional_artifact_steps) if optional_artifact_steps else "true"}
 
-        if command -v grubby >/dev/null 2>&1; then
-          grubby --set-default "/boot/{kernel_image_name}" || true
-          {"grubby --update-kernel=ALL --args='" + cmdline + "'" if cmdline else "true"}
-        fi
-
-        {selinux_cmd or "true"}
         {first_boot_commands}
         echo "success" > "$STATUS_FILE"
         """
@@ -349,3 +321,11 @@ def _align_up(value: int, alignment: int) -> int:
     if remainder == 0:
         return value
     return value + alignment - remainder
+
+
+def _payload_kernel_artifacts(config: VMConfig) -> dict[str, str | None]:
+    return {
+        "kernel_modules_archive": str(config.kernel_artifacts.kernel_modules_archive),
+        "system_map": str(config.kernel_artifacts.system_map) if config.kernel_artifacts.system_map else None,
+        "config": str(config.kernel_artifacts.config) if config.kernel_artifacts.config else None,
+    }

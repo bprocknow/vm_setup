@@ -47,7 +47,7 @@ class ProvisioningTests(unittest.TestCase):
             root_ssh_authorized_keys=["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKey comment"],
             copy_files=[],
             first_boot_commands=["echo ready"],
-            kernel_cmdline_append=["console=ttyS0,115200n8", "earlycon"],
+            kernel_cmdline_append=["root=/dev/vda3", "console=ttyS0,115200n8", "earlycon"],
         )
 
     def _metadata(self, root: Path) -> RunMetadata:
@@ -93,10 +93,10 @@ class ProvisioningTests(unittest.TestCase):
             (root / "base.qcow2").write_text("x", encoding="utf-8")
             config = self._config(root)
             script = build_firstboot_script(config)
-            self.assertIn("grubby --set-default", script)
-            self.assertIn("console=ttyS0,115200n8 earlycon", script)
+            self.assertNotIn("grubby --set-default", script)
+            self.assertNotIn("console=ttyS0,115200n8 earlycon", script)
             self.assertIn('KERNEL_ROOT="$PAYLOAD_ROOT/kernel"', script)
-            self.assertIn('cp -a "$KERNEL_ROOT/', script)
+            self.assertNotIn('cp -a "$KERNEL_ROOT/bzImage" /boot/', script)
             self.assertNotIn("/var/lib/kernelvm/kernel-inputs", script)
             self.assertNotIn("None", script)
 
@@ -177,16 +177,19 @@ class ProvisioningTests(unittest.TestCase):
                     config=config_path,
                 ),
                 root_ssh_authorized_keys=["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKey comment"],
+                kernel_cmdline_append=["root=/dev/vda3"],
             )
             metadata = self._metadata(root)
             payload_dir = root / "payload"
 
             stage_payload(config, metadata, payload_dir)
 
-            self.assertEqual((payload_dir / "kernel" / "bzImage").read_text(encoding="utf-8"), "kernel-image")
             self.assertEqual((payload_dir / "kernel" / "modules.tar.zst").read_text(encoding="utf-8"), "modules-archive")
             self.assertEqual((payload_dir / "kernel" / "System.map").read_text(encoding="utf-8"), "system-map")
             self.assertEqual((payload_dir / "kernel" / "config").read_text(encoding="utf-8"), "kernel-config")
+            self.assertFalse((payload_dir / "kernel" / "bzImage").exists())
+            manifest = yaml.safe_load((payload_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertNotIn("kernel_image", manifest["kernel_artifacts"])
 
     def test_build_payload_image_sizes_for_large_modules_archive(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

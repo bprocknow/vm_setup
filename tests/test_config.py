@@ -32,6 +32,8 @@ root_ssh_authorized_keys:
 kernel_artifacts:
   kernel_image: {kernel_image}
   kernel_modules_archive: {modules}
+kernel_cmdline_append:
+  - root=/dev/vda3
 """,
                 encoding="utf-8",
             )
@@ -65,6 +67,8 @@ root_ssh_authorized_keys:
 kernel_artifacts:
   kernel_image: {kernel_image}
   kernel_modules_archive: {modules}
+kernel_cmdline_append:
+  - root=/dev/vda3
 """,
                 encoding="utf-8",
             )
@@ -94,6 +98,8 @@ root_ssh_authorized_keys:
 kernel_artifacts:
   kernel_image: {kernel_image}
   kernel_modules_archive: {modules}
+kernel_cmdline_append:
+  - root=/dev/vda3
 """,
                 encoding="utf-8",
             )
@@ -124,6 +130,8 @@ root_ssh_authorized_keys:
 kernel_artifacts:
   kernel_image: {kernel_image}
   kernel_modules_archive: {modules}
+kernel_cmdline_append:
+  - root=/dev/vda3
 """,
                 encoding="utf-8",
             )
@@ -132,3 +140,39 @@ kernel_artifacts:
                 load_config(config_path)
 
             self.assertIn("qemu_gdb_debug must be a boolean", exc.exception.errors)
+
+    def test_kernel_image_requires_root_kernel_arg(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            base_image = root / "base.qcow2"
+            kernel_image = root / "bzImage"
+            modules = root / "modules.tar.zst"
+            for path in (base_image, kernel_image, modules):
+                path.write_text("x", encoding="utf-8")
+
+            config_path = root / "config.yaml"
+            config_path.write_text(
+                f"""
+vm_name: kernel-test
+base_image_path: {base_image}
+vcpus: 4
+memory_mb: 8192
+bridge_name: br0
+root_ssh_authorized_keys:
+  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKey comment
+kernel_artifacts:
+  kernel_image: {kernel_image}
+  kernel_modules_archive: {modules}
+kernel_cmdline_append:
+  - console=ttyS0,115200n8
+""",
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(ValidationError) as exc:
+                load_config(config_path)
+
+            self.assertIn(
+                "kernel_cmdline_append must include a root=... entry when kernel_artifacts.kernel_image is configured",
+                exc.exception.errors,
+            )
