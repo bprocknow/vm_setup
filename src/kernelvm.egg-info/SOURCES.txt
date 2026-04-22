@@ -14,6 +14,7 @@ src/kernelvm/provision.py
 src/kernelvm/qemu.py
 src/kernelvm/qmp.py
 src/kernelvm/runs.py
+src/kernelvm/tui.py
 src/kernelvm/utils.py
 src/kernelvm.egg-info/PKG-INFO
 src/kernelvm.egg-info/SOURCES.txt
@@ -31,4 +32,6 @@ tests/test_logging_utils.py
 tests/test_network.py
 tests/test_provision.py
 tests/test_qemu.py
+tests/test_readme.py
 tests/test_runs.py
+tests/test_tui.py

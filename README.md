@@ -62,6 +62,7 @@ make test
 
 ```bash
 kernelvm validate-config path/to/config.yaml
+kernelvm tui path/to/config.yaml
 kernelvm create path/to/config.yaml
 kernelvm list-runs
 kernelvm status <run-id>
@@ -74,6 +75,8 @@ kernelvm destroy <run-id>
 ```
 
 Use `--work-root /path/to/work` to override the default `./work` run storage directory.
+Use `kernelvm tui path/to/config.yaml` to start the interactive VM manager with a create configuration.
+Use `kernelvm tui` to manage existing runs without preselecting a create config.
 
 ## Run directory layout
 

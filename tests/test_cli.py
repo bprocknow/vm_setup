@@ -5,13 +5,25 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from kernelvm.cli import format_ssh_info, start_existing_run
+from kernelvm.cli import build_parser, format_ssh_info, start_existing_run
 from kernelvm.errors import ValidationError
 from kernelvm.models import RunMetadata, RuntimeInfo
 from kernelvm.runs import load_metadata, save_metadata
 
 
 class CliReportingTests(unittest.TestCase):
+    def test_parser_accepts_tui_without_config_file(self) -> None:
+        args = build_parser().parse_args(["tui"])
+
+        self.assertEqual(args.command, "tui")
+        self.assertIsNone(args.config_file)
+
+    def test_parser_accepts_tui_with_config_file(self) -> None:
+        args = build_parser().parse_args(["tui", "path/to/config.yaml"])
+
+        self.assertEqual(args.command, "tui")
+        self.assertEqual(args.config_file, Path("path/to/config.yaml"))
+
     def test_ssh_info_reports_unavailable_when_readiness_failed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
