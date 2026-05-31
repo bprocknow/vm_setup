@@ -15,9 +15,13 @@ from .qemu import attach_console
 from .runs import list_runs, load_metadata, refresh_runtime_state
 
 
+MAIN_LOOP_TIMEOUT_MS = 1000
+
+
 @dataclass(slots=True)
 class TuiState:
     work_root: Path
+    static_configs_dir: Path = Path("static_configs")
     create_config_path: Path | None = None
     verbose: bool = False
     selected_run_id: str | None = None
@@ -29,11 +33,11 @@ class TuiState:
     live_console_run_id: str | None = None
 
 
-def run_tui(work_root: Path, config_path: Path | None = None, *, verbose: bool = False) -> int:
+def run_tui(work_root: Path, *, verbose: bool = False) -> int:
     """Start the curses TUI and return a process-style exit code."""
     state = TuiState(
         work_root=work_root.expanduser(),
-        create_config_path=config_path.expanduser() if config_path else None,
+        static_configs_dir=Path("static_configs"),
         verbose=verbose,
     )
     try:
@@ -181,7 +185,7 @@ class ConsoleAttachRequested(Exception):
 def _run_loop(screen, state: TuiState) -> None:
     curses.curs_set(0)
     screen.keypad(True)
-    screen.timeout(1000)
+    screen.timeout(MAIN_LOOP_TIMEOUT_MS)
     refresh_selection(state)
     state.detail_lines = _status_lines(_selected_metadata(state))
 
@@ -196,14 +200,7 @@ def _run_loop(screen, state: TuiState) -> None:
         if action is None:
             continue
         try:
-            if action == "create" and state.create_config_path is None:
-                config_text = _prompt(screen, "Config path: ")
-                if config_text:
-                    state.create_config_path = Path(config_text).expanduser()
-                else:
-                    _log(state, "Create cancelled: no config path")
-                    continue
-            should_exit = perform_action(state, action, prompt=lambda prompt_text: _prompt(screen, prompt_text))
+            should_exit = perform_action(state, action, prompt=lambda prompt_text: _prompt_after_draw(screen, state, prompt_text))
         except ConsoleAttachRequested as exc:
             curses.def_prog_mode()
             curses.endwin()
@@ -220,13 +217,15 @@ def _run_loop(screen, state: TuiState) -> None:
             return
 
 
+def _prompt_after_draw(screen, state: TuiState, prompt: str) -> str | None:
+    _draw(screen, state)
+    return _prompt(screen, prompt)
+
+
 def _action_create(state: TuiState, *, prompt: Callable[[str], str | None] | None) -> None:
-    config_path = state.create_config_path
-    if config_path is None and prompt is not None:
-        raw_path = prompt("Config path: ")
-        config_path = Path(raw_path).expanduser() if raw_path else None
+    config_path = _choose_static_config(state, prompt=prompt)
     if config_path is None:
-        raise AppError("Create requires a config file path")
+        raise AppError("Create requires choosing a static config file")
 
     run_id = _import_cli().create_run(config_path, state.work_root, verbose=state.verbose)
     state.create_config_path = config_path
@@ -234,6 +233,49 @@ def _action_create(state: TuiState, *, prompt: Callable[[str], str | None] | Non
     metadata = refresh_selection(state)
     state.detail_lines = _status_lines(metadata)
     _log(state, f"Created run {run_id}")
+
+
+def _choose_static_config(state: TuiState, *, prompt: Callable[[str], str | None] | None) -> Path | None:
+    configs = _list_static_configs(state.static_configs_dir)
+    if not configs:
+        raise AppError(f"No *.yaml files found in {state.static_configs_dir}")
+    state.detail_lines = [
+        f"Choose a config from {state.static_configs_dir}:",
+        *(f"{index}. {path.name}" for index, path in enumerate(configs, start=1)),
+    ]
+    if prompt is None:
+        if len(configs) == 1:
+            return configs[0]
+        raise AppError("Create requires an interactive config selection")
+
+    selection = prompt("Config number/name: ")
+    if selection is None:
+        _log(state, "Create cancelled: no config selected")
+        return None
+    return _match_static_config(selection, configs)
+
+
+def _list_static_configs(config_dir: Path) -> list[Path]:
+    config_dir = config_dir.expanduser()
+    try:
+        return sorted(path for path in config_dir.glob("*.yaml") if path.is_file())
+    except OSError as exc:
+        raise AppError(f"Could not read static config directory {config_dir}: {exc}") from exc
+
+
+def _match_static_config(selection: str, configs: list[Path]) -> Path:
+    selection = selection.strip()
+    if selection.isdigit():
+        index = int(selection)
+        if 1 <= index <= len(configs):
+            return configs[index - 1]
+
+    for path in configs:
+        if selection in {path.name, path.stem}:
+            return path
+
+    valid = ", ".join(path.name for path in configs)
+    raise AppError(f"Unknown static config selection: {selection}. Choose one of: {valid}")
 
 
 def _action_destroy(state: TuiState, metadata: RunMetadata) -> None:
@@ -410,6 +452,7 @@ def _draw(screen, state: TuiState) -> None:
 
 def _prompt(screen, prompt: str) -> str | None:
     height, width = screen.getmaxyx()
+    screen.timeout(-1)
     curses.echo()
     curses.curs_set(1)
     try:
@@ -421,6 +464,7 @@ def _prompt(screen, prompt: str) -> str | None:
     finally:
         curses.noecho()
         curses.curs_set(0)
+        screen.timeout(MAIN_LOOP_TIMEOUT_MS)
 
 
 def _addstr(screen, y: int, x: int, text: str, width: int, attr: int = 0) -> None:

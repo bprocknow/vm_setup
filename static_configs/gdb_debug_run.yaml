@@ -1,0 +1,49 @@
+vm_name: kernel-test
+base_image_path: /var/lib/vm-images/Fedora-Cloud-Base.qcow2
+vcpus: 4
+memory_mb: 8192
+disk_size_gb: 40
+bridge_name: br0
+hostname: kernel-test-vm
+
+root_ssh_authorized_keys:
+  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHrVMqDinaeEd5DpHuvSvTu498CMzDCgIWhpPk4kdJMW mainserver
+
+packages:
+  - gcc
+  - make
+  - git
+  - vim
+
+copy_files:
+  - src: /home/mainserver/Downloads/test_file.txt
+    dest: /root/test_file.txt
+
+first_boot_commands:
+  - systemctl enable sshd
+
+kernel_artifacts:
+  # Absolute host input paths. kernelvm boots kernel_image directly through QEMU.
+  kernel_image: /home/mainserver/repo/linux/arch/x86_64/boot/bzImage
+  kernel_modules_archive: /home/mainserver/repo/linux/modules.tar.zst
+  system_map: /home/mainserver/repo/linux/System.map
+  config: /home/mainserver/repo/linux/.config
+  initramfs: /boot/initramfs-6.19.0.img
+
+
+
+kernel_cmdline_append:
+  - root=/dev/vda4
+  - rootflags=subvol=root
+  - console=ttyS0,115200n8
+  - earlycon
+  - nokaslr
+  - rd.debug
+  - rd.shell
+  - systemd.log_level=debug
+  - systemd.log_target=console
+  - ignore_loglevel
+  - loglevel=7
+
+qemu_gdb_debug: true
+serial_log_enabled: true

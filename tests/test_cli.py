@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
 from unittest import mock
 
@@ -16,13 +18,10 @@ class CliReportingTests(unittest.TestCase):
         args = build_parser().parse_args(["tui"])
 
         self.assertEqual(args.command, "tui")
-        self.assertIsNone(args.config_file)
 
-    def test_parser_accepts_tui_with_config_file(self) -> None:
-        args = build_parser().parse_args(["tui", "path/to/config.yaml"])
-
-        self.assertEqual(args.command, "tui")
-        self.assertEqual(args.config_file, Path("path/to/config.yaml"))
+    def test_parser_rejects_tui_with_config_file(self) -> None:
+        with self.assertRaises(SystemExit), redirect_stderr(StringIO()):
+            build_parser().parse_args(["tui", "path/to/config.yaml"])
 
     def test_ssh_info_reports_unavailable_when_readiness_failed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

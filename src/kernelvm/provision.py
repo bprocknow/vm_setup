@@ -297,6 +297,13 @@ fi"""
         if [[ -f "$KERNEL_ROOT/{modules_archive_name}" ]]; then
           mkdir -p /lib/modules
           tar --auto-compress -xf "$KERNEL_ROOT/{modules_archive_name}" -C /
+          RUNNING_RELEASE="$(uname -r)"
+          if [[ ! -d "/lib/modules/$RUNNING_RELEASE" && ! -d "/usr/lib/modules/$RUNNING_RELEASE" ]]; then
+            echo "kernelvm: modules archive did not install modules for running kernel $RUNNING_RELEASE"
+            FOUND_MODULE_DIRS="$(find /lib/modules /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '%P ' 2>/dev/null || true)"
+            echo "kernelvm: found module directories after extraction: ${{FOUND_MODULE_DIRS:-none}}"
+            exit 1
+          fi
         fi
         {"\n".join(optional_artifact_steps) if optional_artifact_steps else "true"}
 

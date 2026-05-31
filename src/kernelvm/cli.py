@@ -52,8 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     console.add_argument("run_id")
     console.add_argument("--attach", action="store_true")
 
-    tui = subparsers.add_parser("tui")
-    tui.add_argument("config_file", type=Path, nargs="?")
+    subparsers.add_parser("tui")
 
     subparsers.add_parser("list-runs")
 
@@ -101,8 +100,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "tui":
             from .tui import run_tui
 
-            config_file = args.config_file.expanduser() if args.config_file else None
-            return run_tui(work_root, config_file, verbose=args.verbose)
+            return run_tui(work_root, verbose=args.verbose)
 
         if args.command == "start":
             _configure_run_logging_if_present(work_root, args.run_id, args.verbose)

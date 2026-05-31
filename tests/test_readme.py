@@ -10,4 +10,5 @@ class ReadmeTests(unittest.TestCase):
 
         content = readme.read_text(encoding="utf-8")
 
-        self.assertIn("kernelvm tui path/to/config.yaml", content)
+        self.assertIn("kernelvm tui", content)
+        self.assertIn("choose a `*.yaml` file from `static_configs/`", content)

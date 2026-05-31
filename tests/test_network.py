@@ -9,6 +9,7 @@ from unittest import mock
 from kernelvm.models import RunMetadata, RuntimeInfo
 from kernelvm.network import (
     HOST_NEIGH_SOURCE,
+    QEMU_PROCESS_SOURCE,
     READINESS_READY,
     READINESS_UNREADY,
     assess_network_readiness,
@@ -72,6 +73,25 @@ class NetworkReadinessTests(unittest.TestCase):
         self.assertIn("DNS resolution failed", observation.readiness_reason or "")
         self.assertTrue(observation.ssh_ready)
 
+    def test_inspect_serial_log_classifies_initramfs_init_handoff_stall(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "console.log"
+            path.write_text(
+                "\n".join(
+                    [
+                        "[   10.388637] Unpacking initramfs...",
+                        "[   11.794217] Freeing initrd memory: 28400K",
+                        "[   13.387354] Run /init as init process",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            observation = inspect_serial_log(path)
+
+        self.assertIsNone(observation.detected_ip)
+        self.assertIn("kernel started /init", observation.readiness_reason or "")
+
     def test_assess_network_readiness_marks_run_ready_when_ip_is_detected(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -128,6 +148,37 @@ class NetworkReadinessTests(unittest.TestCase):
 
             self.assertEqual(metadata.readiness_state, READINESS_UNREADY)
             self.assertIn("No usable guest IPv4 address", metadata.readiness_reason or "")
+
+    def test_assess_network_readiness_reports_qemu_exit_with_serial_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            serial_log = root / "console.log"
+            serial_log.write_text(
+                "\n".join(
+                    [
+                        "[   10.388637] Unpacking initramfs...",
+                        "[   11.794217] Freeing initrd memory: 28400K",
+                        "[   13.387354] Run /init as init process",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            metadata = self._metadata(root, serial_log=serial_log)
+            metadata.runtime.pid = 12345
+
+            with (
+                mock.patch("kernelvm.network.detect_ip_for_mac", return_value=(None, None)),
+                mock.patch("kernelvm.network.diagnose_bridge", return_value=None),
+                mock.patch("kernelvm.network._pid_is_running", return_value=False),
+            ):
+                assess_network_readiness(metadata, timeout_seconds=90, poll_interval_seconds=0)
+
+            self.assertEqual(metadata.state, "stopped")
+            self.assertIsNone(metadata.runtime.pid)
+            self.assertEqual(metadata.readiness_state, READINESS_UNREADY)
+            self.assertEqual(metadata.readiness_source, QEMU_PROCESS_SOURCE)
+            self.assertIn("QEMU exited", metadata.readiness_reason or "")
+            self.assertIn("kernel started /init", metadata.readiness_reason or "")
 
     def test_inspect_serial_log_ignores_unreadable_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

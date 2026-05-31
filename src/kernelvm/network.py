@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -15,10 +16,24 @@ from .utils import run_command
 SERIAL_LOG_SOURCE = "serial-log"
 HOST_NEIGH_SOURCE = "host-ip-neigh"
 READINESS_CHECK_SOURCE = "readiness-check"
+QEMU_PROCESS_SOURCE = "qemu-process"
 READINESS_READY = "ready"
 READINESS_UNREADY = "networking-unready"
 READINESS_UNKNOWN = "unknown"
 IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+ROOT_MOUNT_FAILURE_MARKERS = (
+    "Cannot open root device",
+    "unknown-block(0,0)",
+    "VFS: Unable to mount root fs",
+)
+USERSPACE_BOOT_MARKERS = (
+    "dracut:",
+    "systemd[",
+    "cloud-init[",
+    "Welcome to ",
+    "Reached target ",
+    "Started ",
+)
 
 
 @dataclass(slots=True)
@@ -59,14 +74,22 @@ def maybe_detect_ip(metadata) -> str | None:
 
 def assess_network_readiness(metadata, *, timeout_seconds: int = 90, poll_interval_seconds: int = 2):
     observation = observe_network(metadata)
-    if metadata.readiness_state in {READINESS_READY, READINESS_UNREADY}:
+    if metadata.readiness_state == READINESS_READY:
+        return metadata
+    if _mark_qemu_process_exit(metadata):
+        return metadata
+    if metadata.readiness_state == READINESS_UNREADY:
         return metadata
 
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         time.sleep(poll_interval_seconds)
         observation = observe_network(metadata)
-        if metadata.readiness_state in {READINESS_READY, READINESS_UNREADY}:
+        if metadata.readiness_state == READINESS_READY:
+            return metadata
+        if _mark_qemu_process_exit(metadata):
+            return metadata
+        if metadata.readiness_state == READINESS_UNREADY:
             return metadata
 
     metadata.readiness_state = READINESS_UNREADY
@@ -147,6 +170,18 @@ def _extract_ipv4_from_serial(text: str) -> str | None:
 
 
 def _classify_serial_failure(text: str) -> str | None:
+    if any(marker in text for marker in ROOT_MOUNT_FAILURE_MARKERS):
+        return "Guest kernel could not mount the configured root filesystem during direct kernel boot."
+    if "Kernel panic" in text:
+        return "Guest kernel panicked before networking became ready."
+    if "Attempted to kill init" in text:
+        return "Guest init process exited or crashed before networking became ready."
+    if _stops_after_init_handoff(text):
+        return (
+            "Serial log stops after the kernel started /init from the initramfs; no dracut, systemd, "
+            "or cloud-init output followed. Check initramfs compatibility and add rd.debug, rd.shell, "
+            "or systemd.log_target=console for the next run."
+        )
     if "Could not resolve host" in text or "Could not resolve hostname" in text:
         return "Guest DNS resolution failed during cloud-init package installation."
     if "Failed to start NetworkManager-wait-online.service" in text:
@@ -178,3 +213,40 @@ def _is_usable_ipv4(value: str) -> bool:
     if str(address).startswith("255."):
         return False
     return True
+
+
+def _mark_qemu_process_exit(metadata) -> bool:
+    pid = getattr(metadata.runtime, "pid", None)
+    if metadata.state != "running" or pid is None or _pid_is_running(pid):
+        return False
+
+    metadata.state = "stopped"
+    metadata.runtime.pid = None
+    metadata.readiness_state = READINESS_UNREADY
+    serial_reason = None
+    if metadata.runtime.serial_log:
+        serial_reason = inspect_serial_log(Path(metadata.runtime.serial_log)).readiness_reason
+    if serial_reason:
+        metadata.readiness_reason = f"QEMU exited before guest networking became ready. {serial_reason}"
+    else:
+        metadata.readiness_reason = "QEMU exited before guest networking became ready."
+    metadata.readiness_source = QEMU_PROCESS_SOURCE
+    return True
+
+
+def _pid_is_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _stops_after_init_handoff(text: str) -> bool:
+    marker = "Run /init as init process"
+    if marker not in text:
+        return False
+    after_marker = text.rsplit(marker, 1)[1]
+    return not any(userspace_marker in after_marker for userspace_marker in USERSPACE_BOOT_MARKERS)

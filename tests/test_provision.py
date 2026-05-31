@@ -96,6 +96,8 @@ class ProvisioningTests(unittest.TestCase):
             self.assertNotIn("grubby --set-default", script)
             self.assertNotIn("console=ttyS0,115200n8 earlycon", script)
             self.assertIn('KERNEL_ROOT="$PAYLOAD_ROOT/kernel"', script)
+            self.assertIn('RUNNING_RELEASE="$(uname -r)"', script)
+            self.assertIn('modules archive did not install modules for running kernel $RUNNING_RELEASE', script)
             self.assertNotIn('cp -a "$KERNEL_ROOT/bzImage" /boot/', script)
             self.assertNotIn("/var/lib/kernelvm/kernel-inputs", script)
             self.assertNotIn("None", script)

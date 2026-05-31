@@ -20,10 +20,12 @@ from .models import (
     SUPPORTED_SELINUX_MODES,
     VMConfig,
 )
-from .utils import ensure_command
+from .utils import ensure_command, run_command
 
 SSH_KEY_RE = re.compile(r"^(ssh-(rsa|ed25519)|ecdsa-sha2-nistp(256|384|521)) [A-Za-z0-9+/=]+(?: .*)?$")
 MAC_RE = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
+FILE_KERNEL_RELEASE_RE = re.compile(r"version (?P<release>\S+) \(")
+KERNEL_RELEASE_DIR_RE = re.compile(r"^\d+\.\d+.*$")
 
 
 def load_config(path: Path) -> VMConfig:
@@ -213,6 +215,8 @@ def validate_host_requirements(config: VMConfig) -> None:
         elif not path_obj.is_file():
             errors.append(f"kernel_artifacts.{label} is not a file: {path_obj}")
 
+    errors.extend(_validate_kernel_artifact_compatibility(config))
+
     for copy_spec in config.copy_files:
         if not copy_spec.src.exists():
             errors.append(f"copy_files source does not exist: {copy_spec.src}")
@@ -264,3 +268,54 @@ def _parse_kernel_artifacts(value: Any, errors: list[str]) -> KernelArtifacts:
 
 def _has_kernel_arg(args: list[str], prefix: str) -> bool:
     return any(item.startswith(prefix) for item in args)
+
+
+def _validate_kernel_artifact_compatibility(config: VMConfig) -> list[str]:
+    kernel_release = _detect_kernel_release(config.kernel_artifacts.kernel_image)
+    archive_release = _detect_modules_archive_release(config.kernel_artifacts.kernel_modules_archive)
+    if kernel_release and archive_release and kernel_release != archive_release:
+        return [
+            "kernel_artifacts.kernel_modules_archive does not match the configured kernel_image: "
+            f"archive installs modules for {archive_release}, but kernel_image reports {kernel_release}"
+        ]
+    return []
+
+
+def _detect_kernel_release(kernel_image: Path) -> str | None:
+    try:
+        result = run_command(["file", str(kernel_image.resolve())], capture_output=True)
+    except AppError:
+        return None
+    match = FILE_KERNEL_RELEASE_RE.search(result.stdout or "")
+    if not match:
+        return None
+    return match.group("release")
+
+
+def _detect_modules_archive_release(archive_path: Path) -> str | None:
+    try:
+        result = run_command(["tar", "--auto-compress", "-tf", str(archive_path)], capture_output=True)
+    except AppError:
+        return None
+
+    releases: set[str] = set()
+    for raw_entry in (result.stdout or "").splitlines():
+        release = _extract_release_from_archive_entry(raw_entry.strip())
+        if release:
+            releases.add(release)
+
+    if len(releases) != 1:
+        return None
+    return next(iter(releases))
+
+
+def _extract_release_from_archive_entry(entry: str) -> str | None:
+    normalized = entry[2:] if entry.startswith("./") else entry
+    parts = [part for part in normalized.split("/") if part]
+    if len(parts) >= 3 and parts[0] == "lib" and parts[1] == "modules":
+        return parts[2]
+    if len(parts) >= 4 and parts[0] == "usr" and parts[1] == "lib" and parts[2] == "modules":
+        return parts[3]
+    if parts and KERNEL_RELEASE_DIR_RE.fullmatch(parts[0]):
+        return parts[0]
+    return None

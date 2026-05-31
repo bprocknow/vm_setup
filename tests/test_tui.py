@@ -9,7 +9,16 @@ from unittest import mock
 from kernelvm.errors import AppError
 from kernelvm.models import RunMetadata, RuntimeInfo
 from kernelvm.runs import save_metadata
-from kernelvm.tui import TuiState, _key_to_action, _refresh_live_console, perform_action, refresh_selection, select_initial_run
+from kernelvm.tui import (
+    TuiState,
+    _key_to_action,
+    _list_static_configs,
+    _match_static_config,
+    _refresh_live_console,
+    perform_action,
+    refresh_selection,
+    select_initial_run,
+)
 
 
 class TuiTests(unittest.TestCase):
@@ -45,8 +54,11 @@ class TuiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             work_root = root / "work"
-            config_path = root / "config.yaml"
-            state = TuiState(work_root=work_root, create_config_path=config_path)
+            static_configs = root / "static_configs"
+            static_configs.mkdir()
+            config_path = static_configs / "config.yaml"
+            config_path.write_text("vm_name: test\n", encoding="utf-8")
+            state = TuiState(work_root=work_root, static_configs_dir=static_configs)
 
             def fake_create_run(path: Path, work: Path, *, verbose: bool = False) -> str:
                 self.assertEqual(path, config_path)
@@ -55,11 +67,44 @@ class TuiTests(unittest.TestCase):
                 return "run-new"
 
             with mock.patch("kernelvm.cli.create_run", side_effect=fake_create_run):
-                should_exit = perform_action(state, "create")
+                should_exit = perform_action(state, "create", prompt=lambda _prompt: "1")
 
             self.assertFalse(should_exit)
             self.assertEqual(state.selected_run_id, "run-new")
+            self.assertEqual(state.create_config_path, config_path)
             self.assertIn("Created run run-new", state.action_log)
+
+    def test_create_action_rejects_paths_outside_static_configs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            static_configs = root / "static_configs"
+            static_configs.mkdir()
+            (static_configs / "allowed.yaml").write_text("vm_name: test\n", encoding="utf-8")
+            state = TuiState(work_root=root / "work", static_configs_dir=static_configs)
+
+            with mock.patch("kernelvm.cli.create_run") as create_run:
+                perform_action(state, "create", prompt=lambda _prompt: str(root / "other.yaml"))
+
+            create_run.assert_not_called()
+            self.assertIn("Unknown static config selection", state.error or "")
+
+    def test_static_config_listing_only_includes_yaml_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            static_configs = Path(tmpdir) / "static_configs"
+            static_configs.mkdir()
+            yaml_config = static_configs / "a.yaml"
+            yaml_config.write_text("vm_name: test\n", encoding="utf-8")
+            (static_configs / "b.yml").write_text("vm_name: test\n", encoding="utf-8")
+            (static_configs / "example.yaml.template").write_text("vm_name: test\n", encoding="utf-8")
+
+            self.assertEqual(_list_static_configs(static_configs), [yaml_config])
+
+    def test_static_config_selection_accepts_number_filename_or_stem(self) -> None:
+        configs = [Path("one.yaml"), Path("two.yaml")]
+
+        self.assertEqual(_match_static_config("2", configs), Path("two.yaml"))
+        self.assertEqual(_match_static_config("one.yaml", configs), Path("one.yaml"))
+        self.assertEqual(_match_static_config("one", configs), Path("one.yaml"))
 
     def test_start_stop_refresh_actions_dispatch_without_crashing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
